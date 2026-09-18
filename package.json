@@ -1,0 +1,23 @@
+{
+  "name": "stickerbot",
+  "version": "1.0.0",
+  "description": "WhatsApp AI Sticker Bot using Baileys, Gemini via Cloudflare AI Gateway, and FLUX via Cloudflare Workers AI",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test:ai": "node src/test-ai.js"
+  },
+  "keywords": ["whatsapp", "baileys", "sticker", "cloudflare", "flux", "gemini"],
+  "author": "Rolex AI",
+  "license": "ISC",
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.12",
+    "dotenv": "^16.4.7",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0",
+    "sharp": "^0.33.5",
+    "wa-sticker-formatter": "^4.4.4"
+  }
+}
