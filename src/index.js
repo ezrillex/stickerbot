@@ -1,3 +1,4 @@
+import { jidNormalizedUser } from '@whiskeysockets/baileys';
 import { config } from './config.js';
 import { limiter } from './limiter.js';
 import { enhancePrompt } from './gemini.js';
@@ -41,21 +42,51 @@ async function handleIncomingMessages({ messages, type }) {
 
       if (isGroup) {
         // Group chat requirements:
-        // 1. Bot MUST be tagged/mentioned
+        // 1. Bot MUST be tagged/mentioned OR replied to
         // 2. Message MUST contain a command (!sticker, /sticker, !status, !help)
-        const botId = sock.user?.id?.split(':')[0];
-        const mentionedJids = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-        const isMentioned = botId && mentionedJids.some(jid => jid.includes(botId));
+        const botPhone = (config.bot.phoneNumber || '').replace(/[^0-9]/g, '');
+        const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : '';
+        const botLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : '';
+        const botNum = botJid ? botJid.split('@')[0] : '';
 
-        if (!isMentioned) {
-          // Not tagged: ignore all group chatter
+        const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
+        const mentionedJids = contextInfo?.mentionedJid || [];
+        const quotedParticipant = contextInfo?.participant ? jidNormalizedUser(contextInfo.participant) : '';
+
+        const isMentionedInJids = mentionedJids.some(jid => {
+          const norm = jidNormalizedUser(jid);
+          return (
+            (botJid && norm === botJid) ||
+            (botLid && norm === botLid) ||
+            (botNum && norm.includes(botNum)) ||
+            (botPhone && norm.includes(botPhone))
+          );
+        });
+
+        const isReplyingToBot = Boolean(
+          quotedParticipant && (
+            (botJid && quotedParticipant === botJid) ||
+            (botLid && quotedParticipant === botLid) ||
+            (botNum && quotedParticipant.includes(botNum)) ||
+            (botPhone && quotedParticipant.includes(botPhone))
+          )
+        );
+
+        const isTextTagged = Boolean(
+          botPhone && rawText.includes(botPhone)
+        );
+
+        const isAddressedToBot = isMentionedInJids || isReplyingToBot || isTextTagged;
+
+        if (!isAddressedToBot) {
+          // Not tagged or replied to: ignore group chatter
           continue;
         }
 
-        const textWithoutMentions = rawText.replace(/@\d+/g, '').trim();
+        console.log(`[Group] Message addressed to bot in ${remoteJid}: "${rawText}"`);
 
-        // Handle group help/status
-        if (/^(!help|\/help)/i.test(textWithoutMentions)) {
+        // Handle group help / status
+        if (/(!help|\/help)/i.test(rawText)) {
           const status = limiter.getStatus();
           const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
             `Tag me with the command to create a sticker:\n` +
@@ -65,7 +96,7 @@ async function handleIncomingMessages({ messages, type }) {
           continue;
         }
 
-        if (/^(!status|\/status)/i.test(textWithoutMentions)) {
+        if (/(!status|\/status)/i.test(rawText)) {
           const status = limiter.getStatus();
           const statusMessage = `📊 *Rolex AI Status*\n\n` +
             `• *Used:* ${status.used} / ${status.limit}\n` +
@@ -75,14 +106,15 @@ async function handleIncomingMessages({ messages, type }) {
           continue;
         }
 
-        // Must have command
-        const match = textWithoutMentions.match(/^(!sticker|\/sticker)\s*(.*)/i);
+        // Extract sticker command anywhere in message (even after mention)
+        const match = rawText.match(/(!sticker|\/sticker)\s*(.*)/i);
         if (!match) {
-          // Tagged but without !sticker command: ignore
+          // Tagged but without command
           continue;
         }
 
-        prompt = match[2].trim();
+        // Clean out any remaining mentions from prompt
+        prompt = match[2].replace(/@\S+/g, '').trim();
       } else {
         // Private DM requirements:
         // Must start with a command (!sticker, /sticker, !status, !help).
