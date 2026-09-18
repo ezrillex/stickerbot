@@ -76,9 +76,12 @@ You have two ways to authenticate:
 
 | Command / Input | Context | Behavior |
 | :--- | :--- | :--- |
-| `!sticker a cute astronaut kitten` | DM | Generates and sends a sticker |
-| `/sticker cyber samurai cat` | DM | Generates and sends a sticker (supports `/` or `!`) |
-| `@bot !sticker neon skull` | Group | **Required:** Must tag bot AND include `!sticker` |
+| `!sticker a cute astronaut kitten` | DM | Generates die-cut illustration sticker with clean borders |
+| `/sticker cyber samurai cat` | DM | Generates die-cut illustration sticker (supports `/` or `!`) |
+| `/meme un gato blanco mamado` | DM | Generates realistic low-quality candid meme photo sticker (no borders) |
+| `!meme perro mirando de reojo` | DM | Generates low-res reaction meme sticker (supports `/` or `!`) |
+| `@bot /meme gato mamado sonriendo` | Group | **Required:** Tag bot + `/meme` command |
+| `@bot !sticker neon skull` | Group | **Required:** Tag bot + `!sticker` command |
 | `probando` / casual text | DM or Group | **Ignored completely** |
 | `!status` | DM or Group | Displays daily usage and reset countdown |
 | `!help` | DM or Group | Displays instructions and examples |

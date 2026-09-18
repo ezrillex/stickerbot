@@ -39,6 +39,7 @@ async function handleIncomingMessages({ messages, type }) {
 
       const isGroup = remoteJid.endsWith('@g.us');
       let prompt = '';
+      let mode = 'sticker';
 
       if (isGroup) {
         // Group chat requirements:
@@ -89,9 +90,10 @@ async function handleIncomingMessages({ messages, type }) {
         if (/(!help|\/help)/i.test(rawText)) {
           const status = limiter.getStatus();
           const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
-            `Tag me with the command to create a sticker:\n` +
-            `• *@bot !sticker <description>*\n\n` +
-            `• *Usage today:* ${status.used}/${status.limit} (Resets at 00:00 UTC)`;
+            `Tag me with one of these commands:\n` +
+            `• *@bot !sticker <desc>* — Sticker ilustración con bordes limpios\n` +
+            `• *@bot /meme <desc>* — Foto de meme low-quality / cursed (sin bordes)\n\n` +
+            `• *Uso hoy:* ${status.used}/${status.limit} (Reinicia a las 00:00 UTC)`;
           await sock.sendMessage(remoteJid, { text: helpMessage }, { quoted: msg });
           continue;
         }
@@ -99,34 +101,43 @@ async function handleIncomingMessages({ messages, type }) {
         if (/(!status|\/status)/i.test(rawText)) {
           const status = limiter.getStatus();
           const statusMessage = `📊 *Rolex AI Status*\n\n` +
-            `• *Used:* ${status.used} / ${status.limit}\n` +
-            `• *Remaining:* ${status.remaining}\n` +
-            `• *Resets:* 00:00 UTC`;
+            `• *Usados:* ${status.used} / ${status.limit}\n` +
+            `• *Disponibles:* ${status.remaining}\n` +
+            `• *Reinicia:* 00:00 UTC`;
           await sock.sendMessage(remoteJid, { text: statusMessage }, { quoted: msg });
           continue;
         }
 
-        // Extract sticker command anywhere in message (even after mention)
-        const match = rawText.match(/(!sticker|\/sticker)\s*(.*)/i);
-        if (!match) {
-          // Tagged but without command
+        // Check for meme vs sticker command anywhere in the message
+        const memeMatch = rawText.match(/(!meme|\/meme)\s*(.*)/i);
+        const stickerMatch = rawText.match(/(!sticker|\/sticker)\s*(.*)/i);
+
+        if (memeMatch) {
+          mode = 'meme';
+          prompt = memeMatch[2].replace(/@\S+/g, '').trim();
+        } else if (stickerMatch) {
+          mode = 'sticker';
+          prompt = stickerMatch[2].replace(/@\S+/g, '').trim();
+        } else {
+          // Tagged but without valid command
           continue;
         }
-
-        // Clean out any remaining mentions from prompt
-        prompt = match[2].replace(/@\S+/g, '').trim();
       } else {
         // Private DM requirements:
-        // Must start with a command (!sticker, /sticker, !status, !help).
+        // Must start with a command (!sticker, /sticker, !meme, /meme, !status, !help).
         // Any regular conversational text (e.g. "probando", "hello") is strictly IGNORED.
 
         if (/^(!help|\/help)/i.test(rawText)) {
           const status = limiter.getStatus();
           const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
-            `Start your message with *!sticker* to generate a sticker:\n` +
-            `• *Example:* \`!sticker a cute orange cat eating pizza\`\n\n` +
-            `• *Today's usage:* ${status.used}/${status.limit} stickers\n` +
-            `• *Quota resets:* Daily at 00:00 UTC`;
+            `Comandos disponibles:\n` +
+            `• *!sticker <desc>* — Sticker ilustración con vectores y colores vivos\n` +
+            `• */meme <desc>* — Foto meme realista estilo cámara low quality / cursed\n\n` +
+            `• *Ejemplos:*\n` +
+            `  \`!sticker un gato naranja comiendo pizza\`\n` +
+            `  \`/meme un gato blanco mamado haciendo pose de musculo\`\n\n` +
+            `• *Uso hoy:* ${status.used}/${status.limit} stickers\n` +
+            `• *Reinicia:* 00:00 UTC`;
           await sock.sendMessage(remoteJid, { text: helpMessage }, { quoted: msg });
           continue;
         }
@@ -134,27 +145,34 @@ async function handleIncomingMessages({ messages, type }) {
         if (/^(!status|\/status)/i.test(rawText)) {
           const status = limiter.getStatus();
           const statusMessage = `📊 *Rolex AI Status*\n\n` +
-            `• *Date (UTC):* ${status.date}\n` +
-            `• *Used:* ${status.used} / ${status.limit}\n` +
-            `• *Remaining:* ${status.remaining}\n` +
-            `• *Resets:* 00:00 UTC`;
+            `• *Fecha (UTC):* ${status.date}\n` +
+            `• *Usados:* ${status.used} / ${status.limit}\n` +
+            `• *Disponibles:* ${status.remaining}\n` +
+            `• *Reinicia:* 00:00 UTC`;
           await sock.sendMessage(remoteJid, { text: statusMessage }, { quoted: msg });
           continue;
         }
 
-        const match = rawText.match(/^(!sticker|\/sticker)\s*(.*)/i);
-        if (!match) {
+        const memeMatch = rawText.match(/^(!meme|\/meme)\s*(.*)/i);
+        const stickerMatch = rawText.match(/^(!sticker|\/sticker)\s*(.*)/i);
+
+        if (memeMatch) {
+          mode = 'meme';
+          prompt = memeMatch[2].trim();
+        } else if (stickerMatch) {
+          mode = 'sticker';
+          prompt = stickerMatch[2].trim();
+        } else {
           // Regular text without command prefix: IGNORE completely
           continue;
         }
-
-        prompt = match[2].trim();
       }
 
       if (!prompt || prompt.length < 2) {
+        const exampleCmd = mode === 'meme' ? '/meme' : '!sticker';
         await sock.sendMessage(
           remoteJid,
-          { text: '⚠️ Please provide a description after the command, e.g.:\n`!sticker a cool cyber samurai cat`' },
+          { text: `⚠️ Por favor escribe una descripción después del comando, ej:\n\`${exampleCmd} un gato blanco mamado sonriendo\`` },
           { quoted: msg }
         );
         continue;
@@ -166,26 +184,28 @@ async function handleIncomingMessages({ messages, type }) {
         await sock.sendMessage(
           remoteJid,
           {
-            text: `⏳ *Daily Limit Reached*\n\nThe global daily limit of ${status.limit} stickers has been exhausted for today.\nQuota will automatically reset at 00:00 UTC.`
+            text: `⏳ *Límite diario alcanzado*\n\nEl límite global de ${status.limit} generaciones de hoy se ha agotado.\nSe reiniciará automáticamente a las 00:00 UTC.`
           },
           { quoted: msg }
         );
         continue;
       }
 
-      console.log(`\n[Request] From: ${remoteJid}`);
+      console.log(`\n[Request] Mode: [${mode.toUpperCase()}] | From: ${remoteJid}`);
       console.log(`[Request] Prompt: "${prompt}"`);
 
       // Send initial acknowledgment to user
+      const ackEmoji = mode === 'meme' ? '🎭' : '🎨';
+      const ackTitle = mode === 'meme' ? 'Generando tu meme...' : 'Generando tu sticker...';
       await sock.sendMessage(
         remoteJid,
-        { text: `🎨 *Generating your sticker...*\n"${prompt}"\n_Please wait a few seconds._` },
+        { text: `${ackEmoji} *${ackTitle}*\n"${prompt}"\n_Por favor espera unos segundos..._` },
         { quoted: msg }
       );
 
       // Step 1: Prompt enhancement via Gemini Flash Lite (Cloudflare AI Gateway)
-      console.log('[Pipeline] 1/4 Enhancing prompt with Gemini Flash Lite...');
-      const enhancedPrompt = await enhancePrompt(prompt);
+      console.log(`[Pipeline] 1/4 Enhancing ${mode} prompt with Gemini Flash Lite...`);
+      const enhancedPrompt = await enhancePrompt(prompt, mode);
       console.log(`[Pipeline] Enhanced prompt: "${enhancedPrompt}"`);
 
       // Step 2: Generate image with FLUX (Workers AI direct)

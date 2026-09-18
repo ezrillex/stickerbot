@@ -1,6 +1,6 @@
 import { config } from './config.js';
 
-const SYSTEM_INSTRUCTION = `You are an expert sticker art prompt engineer for AI image generators.
+const STICKER_SYSTEM_INSTRUCTION = `You are an expert sticker art prompt engineer for AI image generators.
 Your job is to convert the user's sticker idea into a detailed, high-quality image generation prompt.
 
 Follow these strict rules:
@@ -10,8 +10,24 @@ Follow these strict rules:
 4. TEXT: Do NOT include text, captions, or words in the image unless the user explicitly asks for words.
 5. OUTPUT: Output ONLY the enhanced prompt in plain text. Do NOT add preamble, quotes, explanations, or markdown formatting. Keep it concise (under 80 words).`;
 
-export async function enhancePrompt(userPrompt) {
+const MEME_SYSTEM_INSTRUCTION = `You are an expert prompt engineer for cursed and hilarious internet meme photos.
+Your job is to convert the user's idea into a prompt for a realistic, funny reaction meme photo, like iconic viral low-quality internet animal/reaction memes (e.g. funny flexing cat, bewildered dog, awkward candid expressions).
+
+Follow these strict rules:
+1. PHOTOGRAPHY STYLE: Specify "funny internet reaction meme, amateur candid flash photography, grainy 2000s flip phone photo, slightly blurry motion, low-res camera aesthetic, cursed funny photo, realistic authentic fur/skin texture, hilarious awkward expression".
+2. ABSOLUTELY NO STICKER/CARTOON ELEMENTS: Do NOT mention "sticker", "die-cut", "border", "white outline", "vector", "drawing", "illustration", or "cartoon". It MUST look like a real photograph of a real creature/subject with a funny, expressive face or goofy posture.
+3. BACKGROUND: Always specify "isolated on a solid pure black #000000 background, completely solid black backdrop with zero gradients, zero shadows, no floor". This is required for automatic cutout.
+4. COMPOSITION: Centered subject with an exaggerated funny pose or facial expression.
+5. TEXT: Do NOT include text, captions, meme subtitles, or watermarks.
+6. OUTPUT: Output ONLY the enhanced prompt in plain text. Do NOT add preamble, quotes, explanations, or markdown formatting. Keep it concise (under 80 words).`;
+
+export async function enhancePrompt(userPrompt, mode = 'sticker') {
   const url = config.cloudflare.geminiGatewayUrl;
+  const isMeme = mode === 'meme';
+  const systemInstruction = isMeme ? MEME_SYSTEM_INSTRUCTION : STICKER_SYSTEM_INSTRUCTION;
+  const userText = isMeme
+    ? `Create a funny low-quality meme photo prompt for: "${userPrompt}"`
+    : `Create a sticker prompt for: "${userPrompt}"`;
 
   const payload = {
     contents: [
@@ -19,7 +35,7 @@ export async function enhancePrompt(userPrompt) {
         role: 'user',
         parts: [
           {
-            text: `Create a sticker prompt for: "${userPrompt}"`
+            text: userText
           }
         ]
       }
@@ -27,12 +43,12 @@ export async function enhancePrompt(userPrompt) {
     systemInstruction: {
       parts: [
         {
-          text: SYSTEM_INSTRUCTION
+          text: systemInstruction
         }
       ]
     },
     generationConfig: {
-      temperature: 0.7,
+      temperature: 0.8,
       maxOutputTokens: 250
     }
   };
@@ -65,4 +81,12 @@ export async function enhancePrompt(userPrompt) {
   }
 
   return enhanced;
+}
+
+export function enhanceStickerPrompt(userPrompt) {
+  return enhancePrompt(userPrompt, 'sticker');
+}
+
+export function enhanceMemePrompt(userPrompt) {
+  return enhancePrompt(userPrompt, 'meme');
 }
