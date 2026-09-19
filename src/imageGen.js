@@ -23,14 +23,19 @@ export async function generateImage(prompt) {
   if (!response.ok) {
     const errorText = await response.text();
     let errorMessage = `Workers AI FLUX error (${response.status}): ${errorText}`;
+    let isSafetyBlocked = false;
+    let isQuotaExhausted = false;
+
     try {
       const errJson = JSON.parse(errorText);
       if (errJson.errors && errJson.errors.length > 0) {
         const firstErr = errJson.errors[0];
         if (firstErr.code === 3030) {
           errorMessage = 'The image request was blocked by Cloudflare AI safety/content filters. Please try a different description.';
+          isSafetyBlocked = true;
         } else if (firstErr.code === 4006) {
           errorMessage = 'Daily Cloudflare Workers AI neuron quota exhausted. Resets at 00:00 UTC.';
+          isQuotaExhausted = true;
         } else {
           errorMessage = `Workers AI error (${firstErr.code}): ${firstErr.message}`;
         }
@@ -38,7 +43,11 @@ export async function generateImage(prompt) {
     } catch {
       // not json, use fallback message
     }
-    throw new Error(errorMessage);
+
+    const err = new Error(errorMessage);
+    err.isSafetyBlocked = isSafetyBlocked;
+    err.isQuotaExhausted = isQuotaExhausted;
+    throw err;
   }
 
   // Handle both JSON (Base64) and raw binary image streams

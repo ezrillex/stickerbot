@@ -1,7 +1,7 @@
 import { jidNormalizedUser } from '@whiskeysockets/baileys';
 import { config } from './config.js';
 import { limiter } from './limiter.js';
-import { enhancePrompt } from './gemini.js';
+import { enhancePrompt, sanitizePrompt } from './gemini.js';
 import { generateImage } from './imageGen.js';
 import { createSticker } from './sticker.js';
 import { connectToWhatsApp, getSocket } from './whatsapp.js';
@@ -210,7 +210,19 @@ async function handleIncomingMessages({ messages, type }) {
 
       // Step 2: Generate image with FLUX (Workers AI direct)
       console.log('[Pipeline] 2/4 Generating 512x512 image with FLUX...');
-      const imageBuffer = await generateImage(enhancedPrompt);
+      let imageBuffer;
+      try {
+        imageBuffer = await generateImage(enhancedPrompt);
+      } catch (genErr) {
+        if (genErr.isSafetyBlocked) {
+          console.warn('[Pipeline] AI safety filter triggered (3030). Automatically sanitizing prompt with Gemini and retrying...');
+          const sanitizedPrompt = await sanitizePrompt(enhancedPrompt, mode);
+          console.log(`[Pipeline] Sanitized prompt: "${sanitizedPrompt}"`);
+          imageBuffer = await generateImage(sanitizedPrompt);
+        } else {
+          throw genErr;
+        }
+      }
       console.log(`[Pipeline] Image generated (${imageBuffer.length} bytes)`);
 
       // Step 3: Background cutout & WebP sticker creation
@@ -232,9 +244,22 @@ async function handleIncomingMessages({ messages, type }) {
     } catch (err) {
       console.error('[Error] Failed to process sticker request:', err);
       try {
+        let userErrorMessage = `❌ *Error generando sticker:* ${err.message}`;
+        if (err.isSafetyBlocked) {
+          const exampleCmd = mode === 'meme' ? '/meme' : '!sticker';
+          userErrorMessage =
+            `⚠️ *Filtro de seguridad de IA*\n\n` +
+            `Cloudflare bloqueó la imagen por filtros de contenido o marcas protegidas (suele suceder al mencionar nombres de juegos, franquicias o palabras ambiguas).\n\n` +
+            `💡 *Consejo:* En vez del nombre del juego, describe la apariencia física del personaje.\n` +
+            `_Ejemplo:_ En lugar de \`${exampleCmd} personaje de peak\`, prueba con:\n` +
+            `\`${exampleCmd} un explorador con abrigo de nieve, mochila de montañismo y gorrito saludando\``;
+        } else if (err.isQuotaExhausted) {
+          userErrorMessage = `⏳ *Límite de Cloudflare alcanzado*\n\nSe ha agotado la cuota diaria de Cloudflare Workers AI. Se reiniciará automáticamente a las 00:00 UTC.`;
+        }
+
         await sock.sendMessage(
-          msg.key.remoteJid,
-          { text: `❌ *Error generating sticker:* ${err.message}` },
+          remoteJid,
+          { text: userErrorMessage },
           { quoted: msg }
         );
       } catch (replyErr) {
