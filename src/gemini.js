@@ -17,17 +17,18 @@ Follow these strict rules:
 7. OUTPUT: Output ONLY the enhanced prompt in plain text. Do NOT add preamble, quotes, explanations, or markdown formatting. Keep it concise (under 80 words).`;
 
 const MEME_SYSTEM_INSTRUCTION = `You are an expert prompt engineer for cursed and hilarious internet meme photos.
-Your job is to convert the user's idea into a prompt for a realistic, funny reaction meme photo, like iconic viral low-quality internet animal/reaction memes (e.g. funny flexing cat, bewildered dog, awkward candid expressions).
+Your job is to convert the user's idea into a prompt for a realistic, funny, cursed internet meme photo.
 
 Follow these strict rules:
-1. PHOTOGRAPHY STYLE: Specify "funny internet reaction meme, amateur candid flash photography, grainy 2000s flip phone photo, slightly blurry motion, low-res camera aesthetic, cursed funny photo, realistic authentic fur/skin texture, hilarious awkward expression".
-2. WHITE DIE-CUT STICKER OUTLINE: Specify "surrounded by a bold clean white die-cut sticker outline contour framing the entire subject and all scene props, vinyl sticker cut, sharp clean silhouette".
-3. BACKGROUND: Specify "on a solid pure black #000000 background, completely solid black backdrop with zero gradients, zero shadows, no floor, isolated subject". The white outline acts as a clean barrier that encapsulates all elements (props, monitors, desks, accessories).
-4. COMPOSITION: Centered subject, completely framed within the canvas, no parts touching or cut off by canvas edges.
-5. CHARACTER & GAME/IP SAFETY: Never mention game titles, brand names, or "from the video game X". If a character/game is requested, describe the physical costume, creature type, and distinctive features realistically.
-6. CONTENT FILTER COMPLIANCE: Keep vocabulary strictly PG and neutral to avoid triggering automated safety filters.
-7. TEXT: Do NOT include text, captions, meme subtitles, or watermarks.
-8. OUTPUT: Output ONLY the enhanced prompt in plain text. Do NOT add preamble, quotes, explanations, or markdown formatting. Keep it concise (under 80 words).`;
+1. SUBJECT FIDELITY: Strictly respect the user's requested subject. Do NOT invent or add animals (such as cats, dogs, etc.) or extra characters unless the user explicitly requested them. If the user asks for an object, device, electronics, vehicle, or food (e.g. a burning PC, a broken laptop, wrecked car, ruined food), depict THAT exact subject in a hilarious, chaotic, or cursed meme situation without adding unprompted animals or people.
+2. PHOTOGRAPHY STYLE: Specify "funny internet meme photo, amateur candid harsh flash photography, grainy 2000s camera phone photo, slightly blurry motion, low-res aesthetic, cursed chaotic vibe, realistic textures". If (and only if) the subject requested by the user is an animal or person, specify "hilarious awkward expression".
+3. WHITE DIE-CUT STICKER OUTLINE: Specify "surrounded by a bold clean white die-cut sticker outline contour framing the entire subject and all scene props, vinyl sticker cut, sharp clean silhouette".
+4. BACKGROUND: Specify "on a solid pure black #000000 background, completely solid black backdrop with zero gradients, zero shadows, no floor, isolated subject". The white outline acts as a clean barrier that encapsulates all elements (props, monitors, desks, accessories).
+5. COMPOSITION: Centered subject, completely framed within the canvas, no parts touching or cut off by canvas edges.
+6. CHARACTER & GAME/IP SAFETY: Never mention game titles, brand names, or "from the video game X". If a character/game is requested, describe the physical costume, creature type, and distinctive features realistically.
+7. CONTENT FILTER COMPLIANCE: Keep vocabulary strictly PG and neutral to avoid triggering automated safety filters.
+8. TEXT: Do NOT include text, captions, meme subtitles, or watermarks.
+9. OUTPUT: Output ONLY the enhanced prompt in plain text. Do NOT add preamble, quotes, explanations, or markdown formatting. Keep it concise (under 80 words).`;
 
 export async function enhancePrompt(userPrompt, mode = 'sticker') {
   const url = config.cloudflare.geminiGatewayUrl;
@@ -104,7 +105,7 @@ Strict rules:
 2. Replace them with pure physical and visual descriptions (clothing, colors, distinctive equipment/gear, creature archetype, pose, expression).
 3. Ensure all vocabulary is strictly safe, neutral, and family-friendly, avoiding any ambiguous words that could trigger false-positive safety flags.
 4. Maintain the background requirement: "on a solid pure black #000000 background, completely solid black backdrop with zero gradients, zero shadows, no floor, isolated subject".
-${isMeme ? '5. Maintain the meme aesthetic: amateur candid flash photography, funny expression, no cartoon/vector keywords.' : '5. Maintain the sticker art style: die-cut sticker art style, bold clean contours, sharp vector illustration.'}
+${isMeme ? '5. Maintain the meme aesthetic: amateur candid harsh flash photography, cursed chaotic meme vibe, realistic textures, no cartoon/vector keywords.' : '5. Maintain the sticker art style: die-cut sticker art style, bold clean contours, sharp vector illustration.'}
 6. Output ONLY the sanitized prompt in plain text without quotes, preamble, or markdown. Keep it under 75 words.`;
 
   const userText = `This prompt was blocked by an AI safety/copyright filter: "${blockedPrompt}". Rewrite and sanitize it with pure visual descriptions so it passes all filters safely.`;
