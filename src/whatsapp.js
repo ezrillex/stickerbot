@@ -73,7 +73,6 @@ export async function connectToWhatsApp(onMessageCallback) {
     version,
     auth: state,
     logger: pino({ level: 'silent' }),
-    printQRInTerminal: !usePairingCode,
     browser: Browsers.ubuntu('Chrome'),
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
