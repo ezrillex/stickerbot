@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { jidNormalizedUser } from '@whiskeysockets/baileys';
 import { config } from './config.js';
 import { limiter } from './limiter.js';
@@ -5,6 +8,40 @@ import { enhancePrompt, sanitizePrompt } from './gemini.js';
 import { generateImage } from './imageGen.js';
 import { createSticker } from './sticker.js';
 import { connectToWhatsApp, getSocket } from './whatsapp.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const IMAGES_LOG_DIR = path.join(__dirname, '..', 'logs', 'images');
+
+function saveRawImageLog(buffer, mode, userPrompt) {
+  try {
+    if (!fs.existsSync(IMAGES_LOG_DIR)) {
+      fs.mkdirSync(IMAGES_LOG_DIR, { recursive: true });
+    }
+
+    let ext = 'png';
+    if (buffer[0] === 0xff && buffer[1] === 0xd8) ext = 'jpg';
+    else if (buffer[0] === 0x89 && buffer[1] === 0x50) ext = 'png';
+    else if (buffer[0] === 0x52 && buffer[1] === 0x49) ext = 'webp';
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const slug = (userPrompt || 'image')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '_')
+      .slice(0, 30)
+      .replace(/^_+|_+$/g, '');
+
+    const filename = `${timestamp}_${mode}_${slug}.${ext}`;
+    const filePath = path.join(IMAGES_LOG_DIR, filename);
+
+    fs.writeFileSync(filePath, buffer);
+    console.log(`[Log] Raw image saved: logs/images/${filename}`);
+  } catch (err) {
+    console.warn('[Log] Could not save raw image log:', err.message);
+  }
+}
 
 console.log('==============================================');
 console.log('     Rolex AI StickerBot — Starting Up        ');
@@ -225,9 +262,12 @@ async function handleIncomingMessages({ messages, type }) {
       }
       console.log(`[Pipeline] Image generated (${imageBuffer.length} bytes)`);
 
+      // Log raw image exactly as it comes from the image model
+      saveRawImageLog(imageBuffer, mode, prompt);
+
       // Step 3: Background cutout & WebP sticker creation
       console.log('[Pipeline] 3/4 Removing dark background and creating WebP sticker...');
-      const stickerBuffer = await createSticker(imageBuffer);
+      const stickerBuffer = await createSticker(imageBuffer, { removeBg: true });
       console.log(`[Pipeline] Sticker ready (${stickerBuffer.length} bytes)`);
 
       // Step 4: Send sticker as quoted reply

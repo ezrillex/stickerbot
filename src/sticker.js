@@ -198,70 +198,84 @@ export async function addStickerExif(webpBuffer, metadata = {}) {
 }
 
 /**
- * Converts raw image buffer into a transparent WhatsApp WebP sticker with metadata.
- * Processes connected background cutout and formats into 512x512 WebP with WhatsApp EXIF metadata.
+ * Converts raw image buffer into a WhatsApp WebP sticker with metadata.
+ * If options.removeBg is true (default), applies boundary-connected flood-fill cutout.
+ * If options.removeBg is false, keeps the full photo scene without cutout.
  */
-export async function createSticker(imageBuffer, metadata = {}) {
+export async function createSticker(imageBuffer, options = {}) {
+  const { removeBg = true, ...metadata } = options;
   let webpBuffer;
 
-  try {
-    // Step 1: Decode to raw RGBA buffer
-    const { data, info } = await sharp(imageBuffer)
-      .ensureAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-
-    const { width, height, channels } = info;
-
-    // Step 2: Sample corner pixels to estimate background color
-    const cornerCoords = [
-      [2, 2],
-      [width - 3, 2],
-      [2, height - 3],
-      [width - 3, height - 3]
-    ];
-
-    let sumR = 0, sumG = 0, sumB = 0;
-    for (const [cx, cy] of cornerCoords) {
-      const idx = (cy * width + cx) * channels;
-      sumR += data[idx];
-      sumG += data[idx + 1];
-      sumB += data[idx + 2];
-    }
-
-    const bgR = sumR / cornerCoords.length;
-    const bgG = sumG / cornerCoords.length;
-    const bgB = sumB / cornerCoords.length;
-
-    // Step 3: Remove dark background using boundary-connected flood fill
-    const isDarkBg = ((bgR + bgG + bgB) / 3) < 60;
-    if (isDarkBg) {
-      applyFloodFillCutout(data, width, height, channels, bgR, bgG, bgB);
-    }
-
-    // Step 4: Fit inside 512x512 transparent canvas and directly encode to WebP
-    webpBuffer = await sharp(data, {
-      raw: { width, height, channels }
-    })
-      .resize(512, 512, {
-        fit: 'contain',
-        background: { r: 0, g: 0, b: 0, alpha: 0 }
-      })
-      .webp({ quality: 75, effort: 4 })
-      .toBuffer();
-
-  } catch (err) {
-    console.warn('[Sticker] Background cutout warning, using fallback WebP conversion:', err.message);
+  if (!removeBg) {
+    // Full scene photo sticker (sin recorte)
     webpBuffer = await sharp(imageBuffer)
       .resize(512, 512, {
         fit: 'contain',
         background: { r: 0, g: 0, b: 0, alpha: 0 }
       })
-      .webp({ quality: 75, effort: 4 })
+      .webp({ quality: 80, effort: 4 })
       .toBuffer();
+  } else {
+    // Cutout sticker (recortado con flood-fill)
+    try {
+      // Step 1: Decode to raw RGBA buffer
+      const { data, info } = await sharp(imageBuffer)
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      const { width, height, channels } = info;
+
+      // Step 2: Sample corner pixels to estimate background color
+      const cornerCoords = [
+        [2, 2],
+        [width - 3, 2],
+        [2, height - 3],
+        [width - 3, height - 3]
+      ];
+
+      let sumR = 0, sumG = 0, sumB = 0;
+      for (const [cx, cy] of cornerCoords) {
+        const idx = (cy * width + cx) * channels;
+        sumR += data[idx];
+        sumG += data[idx + 1];
+        sumB += data[idx + 2];
+      }
+
+      const bgR = sumR / cornerCoords.length;
+      const bgG = sumG / cornerCoords.length;
+      const bgB = sumB / cornerCoords.length;
+
+      // Step 3: Remove dark background using boundary-connected flood fill
+      const isDarkBg = ((bgR + bgG + bgB) / 3) < 60;
+      if (isDarkBg) {
+        applyFloodFillCutout(data, width, height, channels, bgR, bgG, bgB);
+      }
+
+      // Step 4: Fit inside 512x512 transparent canvas and directly encode to WebP
+      webpBuffer = await sharp(data, {
+        raw: { width, height, channels }
+      })
+        .resize(512, 512, {
+          fit: 'contain',
+          background: { r: 0, g: 0, b: 0, alpha: 0 }
+        })
+        .webp({ quality: 75, effort: 4 })
+        .toBuffer();
+
+    } catch (err) {
+      console.warn('[Sticker] Background cutout warning, using fallback WebP conversion:', err.message);
+      webpBuffer = await sharp(imageBuffer)
+        .resize(512, 512, {
+          fit: 'contain',
+          background: { r: 0, g: 0, b: 0, alpha: 0 }
+        })
+        .webp({ quality: 75, effort: 4 })
+        .toBuffer();
+    }
   }
 
-  // Step 5: Format as WhatsApp WebP sticker with EXIF metadata
+  // Format as WhatsApp WebP sticker with EXIF metadata
   return addStickerExif(webpBuffer, {
     pack: metadata.pack || config.bot.stickerPack,
     author: metadata.author || config.bot.stickerAuthor,
