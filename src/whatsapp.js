@@ -37,6 +37,7 @@ function clearAuthSession() {
     if (fs.existsSync(AUTH_DIR)) {
       fs.rmSync(AUTH_DIR, { recursive: true, force: true });
     }
+    fs.mkdirSync(AUTH_DIR, { recursive: true });
   } catch (err) {
     console.warn('[WhatsApp] Could not clear auth directory:', err.message);
   }

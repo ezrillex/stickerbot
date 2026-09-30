@@ -49,10 +49,6 @@ function saveRawImageLog(buffer, mode, userPrompt) {
   }
 }
 
-console.log('==============================================');
-console.log('     Rolex AI StickerBot — Starting Up        ');
-console.log('==============================================');
-
 function getContextInfo(content) {
   if (!content) return undefined;
   return (
@@ -471,9 +467,28 @@ async function handleIncomingMessages({ messages, type }) {
   }
 }
 
-// Start WhatsApp connection when run directly as the main script
-const isMainScript = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMainScript && process.env.NODE_ENV !== 'test') {
+// Start WhatsApp connection when run directly as the main script or under PM2
+function isMainEntry() {
+  if (process.env.NODE_ENV === 'test') {
+    return false;
+  }
+  if (process.env.pm_id !== undefined) {
+    return true;
+  }
+  const entryPath = process.env.pm_exec_path || process.argv[1];
+  if (!entryPath) return false;
+  try {
+    return import.meta.url === pathToFileURL(path.resolve(entryPath)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainEntry()) {
+  console.log('==============================================');
+  console.log('     Rolex AI StickerBot — Starting Up        ');
+  console.log('==============================================');
+
   connectToWhatsApp(handleIncomingMessages).catch((err) => {
     console.error('[Fatal] Error starting bot:', err);
     process.exit(1);
