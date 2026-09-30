@@ -72,16 +72,22 @@ class DailyLimiter {
     }
   }
 
-  canGenerate() {
+  tryAcquire() {
     this.checkReset();
-    return this.count < this.limit;
+    if (this.count < this.limit) {
+      this.count++;
+      this.save();
+      return true;
+    }
+    return false;
   }
 
-  increment() {
+  refund() {
     this.checkReset();
-    this.count++;
-    this.save();
-    return this.count;
+    if (this.count > 0) {
+      this.count--;
+      this.save();
+    }
   }
 
   getRemaining() {

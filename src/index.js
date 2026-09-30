@@ -1,7 +1,12 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { jidNormalizedUser } from '@whiskeysockets/baileys';
+import { fileURLToPath, pathToFileURL } from 'url';
+import {
+  jidNormalizedUser,
+  extractMessageContent,
+  downloadContentFromMessage
+} from '@whiskeysockets/baileys';
+import sharp from 'sharp';
 import { config } from './config.js';
 import { limiter } from './limiter.js';
 import { enhancePrompt, sanitizePrompt } from './gemini.js';
@@ -33,7 +38,8 @@ function saveRawImageLog(buffer, mode, userPrompt) {
       .slice(0, 30)
       .replace(/^_+|_+$/g, '');
 
-    const filename = `${timestamp}_${mode}_${slug}.${ext}`;
+    const finalSlug = slug || 'image';
+    const filename = `${timestamp}_${mode}_${finalSlug}.${ext}`;
     const filePath = path.join(IMAGES_LOG_DIR, filename);
 
     fs.writeFileSync(filePath, buffer);
@@ -47,13 +53,85 @@ console.log('==============================================');
 console.log('     Rolex AI StickerBot — Starting Up        ');
 console.log('==============================================');
 
-function extractMessageText(message) {
-  if (!message) return '';
+function getContextInfo(content) {
+  if (!content) return undefined;
   return (
-    message.conversation ||
-    message.extendedTextMessage?.text ||
-    message.imageMessage?.caption ||
-    message.videoMessage?.caption ||
+    content.extendedTextMessage?.contextInfo ||
+    content.imageMessage?.contextInfo ||
+    content.videoMessage?.contextInfo ||
+    content.documentMessage?.contextInfo ||
+    content.audioMessage?.contextInfo ||
+    content.stickerMessage?.contextInfo
+  );
+}
+
+async function downloadBaileysMedia(mediaMessage, type = 'image') {
+  let timeoutId;
+  let timedOut = false;
+  try {
+    const downloadPromise = (async () => {
+      const stream = await downloadContentFromMessage(mediaMessage, type);
+      let buffer = Buffer.alloc(0);
+      for await (const chunk of stream) {
+        if (timedOut) {
+          if (typeof stream.destroy === 'function') stream.destroy();
+          break;
+        }
+        buffer = Buffer.concat([buffer, chunk]);
+      }
+      return buffer;
+    })();
+
+    // Prevent unhandled rejection if download fails after timeout
+    downloadPromise.catch((err) => {
+      if (timedOut) {
+        console.warn('[WhatsApp Media] Background download failed after timeout:', err.message);
+      }
+    });
+
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        reject(new Error('Tiempo de espera agotado al descargar de WhatsApp'));
+      }, 25000);
+    });
+
+    const buffer = await Promise.race([downloadPromise, timeoutPromise]);
+
+    if (!buffer || buffer.length === 0) {
+      throw new Error('La imagen descargada está vacía o no se pudo leer.');
+    }
+    return buffer;
+  } catch (err) {
+    throw new Error(`No se pudo descargar la imagen original (${err.message}). Si es una foto antigua, por favor reenvíala.`);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function cleanGroupPrompt(text, botPhone) {
+  let cleaned = text.replace(/@\S+/g, '');
+  if (botPhone) {
+    cleaned = cleaned.replace(new RegExp(botPhone, 'g'), '');
+  }
+  return cleaned.trim();
+}
+
+async function preprocessReferenceImage(inputBuffer) {
+  return sharp(inputBuffer)
+    .rotate() // auto-orient based on smartphone EXIF orientation tag
+    .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+}
+
+function extractMessageText(content) {
+  if (!content) return '';
+  return (
+    content.conversation ||
+    content.extendedTextMessage?.text ||
+    content.imageMessage?.caption ||
+    content.videoMessage?.caption ||
     ''
   ).trim();
 }
@@ -65,252 +143,346 @@ async function handleIncomingMessages({ messages, type }) {
   if (!sock) return;
 
   for (const msg of messages) {
-    try {
-      if (!msg.message || msg.key.fromMe) continue;
-
-      const remoteJid = msg.key.remoteJid;
-      if (!remoteJid) continue;
-
-      const rawText = extractMessageText(msg.message);
-      if (!rawText) continue;
-
-      const isGroup = remoteJid.endsWith('@g.us');
-      let prompt = '';
+    (async () => {
+      const remoteJid = msg?.key?.remoteJid;
       let mode = 'sticker';
+      let quotaAcquired = false;
 
-      if (isGroup) {
-        // Group chat requirements:
-        // 1. Bot MUST be tagged/mentioned OR replied to
-        // 2. Message MUST contain a command (!sticker, /sticker, !status, !help)
-        const botPhone = (config.bot.phoneNumber || '').replace(/[^0-9]/g, '');
-        const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : '';
-        const botLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : '';
-        const botNum = botJid ? botJid.split('@')[0] : '';
+      try {
+        if (!msg?.message || msg?.key?.fromMe) return;
+        if (!remoteJid) return;
 
-        const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
-        const mentionedJids = contextInfo?.mentionedJid || [];
-        const quotedParticipant = contextInfo?.participant ? jidNormalizedUser(contextInfo.participant) : '';
+        const isGroup = remoteJid.endsWith('@g.us');
 
-        const isMentionedInJids = mentionedJids.some(jid => {
-          const norm = jidNormalizedUser(jid);
-          return (
-            (botJid && norm === botJid) ||
-            (botLid && norm === botLid) ||
-            (botNum && norm.includes(botNum)) ||
-            (botPhone && norm.includes(botPhone))
+        // Unwrap inner message content
+        const content = extractMessageContent(msg.message);
+        if (!content) return;
+
+        const directImage = content.imageMessage;
+        const rawText = extractMessageText(content);
+
+        // Extract quoted context info across all possible Baileys message subtypes
+        const contextInfo = getContextInfo(content);
+        const quotedContent = contextInfo?.quotedMessage ? extractMessageContent(contextInfo.quotedMessage) : undefined;
+        const quotedImage = quotedContent?.imageMessage;
+
+        // An image is present if directly attached or if quoting an existing image
+        const targetImage = directImage || quotedImage;
+
+        // Skip message if there is NEITHER text NOR media
+        if (!rawText && !targetImage) return;
+
+        let prompt = '';
+        let isBareCommand = false;
+
+        if (isGroup) {
+          // Group chat requirements:
+          // 1. Bot MUST be tagged/mentioned OR replied to
+          const botPhone = (config.bot.phoneNumber || '').replace(/[^0-9]/g, '');
+          const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : '';
+          const botLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : '';
+          const botNum = botJid ? botJid.split('@')[0] : '';
+
+          const mentionedJids = contextInfo?.mentionedJid || [];
+          const quotedParticipant = contextInfo?.participant ? jidNormalizedUser(contextInfo.participant) : '';
+
+          const isMentionedInJids = mentionedJids.some(jid => {
+            const norm = jidNormalizedUser(jid);
+            return (
+              (botJid && norm === botJid) ||
+              (botLid && norm === botLid) ||
+              (botNum && norm.includes(botNum)) ||
+              (botPhone && norm.includes(botPhone))
+            );
+          });
+
+          const isReplyingToBot = Boolean(
+            quotedParticipant && (
+              (botJid && quotedParticipant === botJid) ||
+              (botLid && quotedParticipant === botLid) ||
+              (botNum && quotedParticipant.includes(botNum)) ||
+              (botPhone && quotedParticipant.includes(botPhone))
+            )
           );
-        });
 
-        const isReplyingToBot = Boolean(
-          quotedParticipant && (
-            (botJid && quotedParticipant === botJid) ||
-            (botLid && quotedParticipant === botLid) ||
-            (botNum && quotedParticipant.includes(botNum)) ||
-            (botPhone && quotedParticipant.includes(botPhone))
-          )
-        );
+          const isTextTagged = Boolean(
+            botPhone && rawText.includes(botPhone)
+          );
 
-        const isTextTagged = Boolean(
-          botPhone && rawText.includes(botPhone)
-        );
+          const isAddressedToBot = isMentionedInJids || isReplyingToBot || isTextTagged;
 
-        const isAddressedToBot = isMentionedInJids || isReplyingToBot || isTextTagged;
+          if (!isAddressedToBot) {
+            // Not tagged or replied to: ignore group chatter
+            return;
+          }
 
-        if (!isAddressedToBot) {
-          // Not tagged or replied to: ignore group chatter
-          continue;
-        }
+          console.log(`[Group] Message addressed to bot in ${remoteJid}: "${rawText}"`);
 
-        console.log(`[Group] Message addressed to bot in ${remoteJid}: "${rawText}"`);
+          // Handle group help / status
+          if (/(!help|\/help)/i.test(rawText)) {
+            const status = limiter.getStatus();
+            const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
+              `Mencióname o responde a mis mensajes con:\n` +
+              `• *@bot <desc>* — Genera sticker de ilustración\n` +
+              `• *@bot /meme <desc>* — Genera foto meme cursed\n` +
+              `• *@bot (en foto o respondiendo a foto)* sin texto — Convierte a sticker directo (sin gastar cuota IA)\n` +
+              `• *@bot <instrucción> (respondiendo a foto)* — Edita la foto con IA (ej: \`@bot hazlo llorando\`, \`@bot ponelo enojado\`)\n` +
+              `• *@bot /sticker* o *@bot /meme (con foto)* — Transforma la foto al modo elegido\n\n` +
+              `• *Uso hoy:* ${status.used}/${status.limit} generaciones IA (Reinicia a las 00:00 UTC)`;
+            await sock.sendMessage(remoteJid, { text: helpMessage }, { quoted: msg });
+            return;
+          }
 
-        // Handle group help / status
-        if (/(!help|\/help)/i.test(rawText)) {
-          const status = limiter.getStatus();
-          const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
-            `Tag me with one of these commands:\n` +
-            `• *@bot !sticker <desc>* — Sticker ilustración con bordes limpios\n` +
-            `• *@bot /meme <desc>* — Foto de meme low-quality / cursed (sin bordes)\n\n` +
-            `• *Uso hoy:* ${status.used}/${status.limit} (Reinicia a las 00:00 UTC)`;
-          await sock.sendMessage(remoteJid, { text: helpMessage }, { quoted: msg });
-          continue;
-        }
+          if (/(!status|\/status)/i.test(rawText)) {
+            const status = limiter.getStatus();
+            const statusMessage = `📊 *Rolex AI Status*\n\n` +
+              `• *Usados:* ${status.used} / ${status.limit}\n` +
+              `• *Disponibles:* ${status.remaining}\n` +
+              `• *Reinicia:* 00:00 UTC`;
+            await sock.sendMessage(remoteJid, { text: statusMessage }, { quoted: msg });
+            return;
+          }
 
-        if (/(!status|\/status)/i.test(rawText)) {
-          const status = limiter.getStatus();
-          const statusMessage = `📊 *Rolex AI Status*\n\n` +
-            `• *Usados:* ${status.used} / ${status.limit}\n` +
-            `• *Disponibles:* ${status.remaining}\n` +
-            `• *Reinicia:* 00:00 UTC`;
-          await sock.sendMessage(remoteJid, { text: statusMessage }, { quoted: msg });
-          continue;
-        }
+          const memeMatch = rawText.match(/(!meme|\/meme)\s*(.*)/i);
+          const stickerMatch = rawText.match(/(!sticker|\/sticker)\s*(.*)/i);
 
-        // Check for meme vs sticker command anywhere in the message
-        const memeMatch = rawText.match(/(!meme|\/meme)\s*(.*)/i);
-        const stickerMatch = rawText.match(/(!sticker|\/sticker)\s*(.*)/i);
-
-        if (memeMatch) {
-          mode = 'meme';
-          prompt = memeMatch[2].replace(/@\S+/g, '').trim();
-        } else if (stickerMatch) {
-          mode = 'sticker';
-          prompt = stickerMatch[2].replace(/@\S+/g, '').trim();
+          if (memeMatch) {
+            mode = 'meme';
+            prompt = cleanGroupPrompt(memeMatch[2], botPhone);
+            if (!prompt) isBareCommand = true;
+          } else if (stickerMatch) {
+            mode = 'sticker';
+            prompt = cleanGroupPrompt(stickerMatch[2], botPhone);
+            if (!prompt) isBareCommand = true;
+          } else if (targetImage) {
+            // Tagged with a photo or quoting a photo without explicit command prefix
+            prompt = cleanGroupPrompt(rawText, botPhone);
+            mode = 'sticker';
+          } else {
+            // Tagged text without command or image
+            return;
+          }
         } else {
-          // Tagged but without valid command
-          continue;
+          // Private DM requirements:
+          if (/^(!help|\/help)/i.test(rawText)) {
+            const status = limiter.getStatus();
+            const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
+              `*¿Cómo usarlo en chat privado?*\n\n` +
+              `✨ *Creación con IA:*\n` +
+              `• *Escribe cualquier texto* — Genera sticker automáticamente (ej: \`un gato astronauta\`)\n` +
+              `• */meme <desc>* — Forzar foto meme realista / cursed\n` +
+              `• *!sticker <desc>* — Forzar modo ilustración sticker\n\n` +
+              `📸 *Edición de fotos con IA:*\n` +
+              `• *Foto + texto* (o respondiendo a una foto) — Edita la foto con IA (ej: \`hazlo llorando\`, \`ponelo enojado\`, \`hacelo caricatura\`)\n` +
+              `• *Foto + /sticker* o */meme* — Transforma la foto al estilo seleccionado\n\n` +
+              `⚡ *Conversión directa (Sin IA / Ilimitado):*\n` +
+              `• *Envía cualquier foto sin texto* — Se convierte a sticker al instante sin consumir cuota diaria\n\n` +
+              `📊 *Estado:* ${status.used}/${status.limit} generaciones IA hoy (Reinicia 00:00 UTC)`;
+            await sock.sendMessage(remoteJid, { text: helpMessage }, { quoted: msg });
+            return;
+          }
+
+          if (/^(!status|\/status)/i.test(rawText)) {
+            const status = limiter.getStatus();
+            const statusMessage = `📊 *Rolex AI Status*\n\n` +
+              `• *Fecha (UTC):* ${status.date}\n` +
+              `• *Usados:* ${status.used} / ${status.limit}\n` +
+              `• *Disponibles:* ${status.remaining}\n` +
+              `• *Reinicia:* 00:00 UTC`;
+            await sock.sendMessage(remoteJid, { text: statusMessage }, { quoted: msg });
+            return;
+          }
+
+          const memeMatch = rawText.match(/^(!meme|\/meme)\s*(.*)/i);
+          const stickerMatch = rawText.match(/^(!sticker|\/sticker)\s*(.*)/i);
+
+          if (memeMatch) {
+            mode = 'meme';
+            prompt = memeMatch[2].trim();
+            if (!prompt) isBareCommand = true;
+          } else if (stickerMatch) {
+            mode = 'sticker';
+            prompt = stickerMatch[2].trim();
+            if (!prompt) isBareCommand = true;
+          } else {
+            // Natural DM: plain text defaults to sticker mode
+            mode = 'sticker';
+            prompt = rawText.trim();
+          }
         }
-      } else {
-        // Private DM requirements:
-        // Must start with a command (!sticker, /sticker, !meme, /meme, !status, !help).
-        // Any regular conversational text (e.g. "probando", "hello") is strictly IGNORED.
 
-        if (/^(!help|\/help)/i.test(rawText)) {
-          const status = limiter.getStatus();
-          const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
-            `Comandos disponibles:\n` +
-            `• *!sticker <desc>* — Sticker ilustración con vectores y colores vivos\n` +
-            `• */meme <desc>* — Foto meme realista estilo cámara low quality / cursed\n\n` +
-            `• *Ejemplos:*\n` +
-            `  \`!sticker un gato naranja comiendo pizza\`\n` +
-            `  \`/meme un gato blanco mamado haciendo pose de musculo\`\n\n` +
-            `• *Uso hoy:* ${status.used}/${status.limit} stickers\n` +
-            `• *Reinicia:* 00:00 UTC`;
-          await sock.sendMessage(remoteJid, { text: helpMessage }, { quoted: msg });
-          continue;
-        }
-
-        if (/^(!status|\/status)/i.test(rawText)) {
-          const status = limiter.getStatus();
-          const statusMessage = `📊 *Rolex AI Status*\n\n` +
-            `• *Fecha (UTC):* ${status.date}\n` +
-            `• *Usados:* ${status.used} / ${status.limit}\n` +
-            `• *Disponibles:* ${status.remaining}\n` +
-            `• *Reinicia:* 00:00 UTC`;
-          await sock.sendMessage(remoteJid, { text: statusMessage }, { quoted: msg });
-          continue;
-        }
-
-        const memeMatch = rawText.match(/^(!meme|\/meme)\s*(.*)/i);
-        const stickerMatch = rawText.match(/^(!sticker|\/sticker)\s*(.*)/i);
-
-        if (memeMatch) {
-          mode = 'meme';
-          prompt = memeMatch[2].trim();
-        } else if (stickerMatch) {
-          mode = 'sticker';
-          prompt = stickerMatch[2].trim();
-        } else {
-          // Regular text without command prefix: IGNORE completely
-          continue;
-        }
-      }
-
-      if (!prompt || prompt.length < 2) {
-        const exampleCmd = mode === 'meme' ? '/meme' : '!sticker';
-        await sock.sendMessage(
-          remoteJid,
-          { text: `⚠️ Por favor escribe una descripción después del comando, ej:\n\`${exampleCmd} un gato blanco mamado sonriendo\`` },
-          { quoted: msg }
+        // Check for Direct Photo -> Sticker (NO AI flow)
+        // Criteria:
+        // 1. An image is present (targetImage).
+        // 2. Either no text was sent, or text is purely a direct sticker phrase ("hazlo sticker", "hacelo sticker", "sticker").
+        // Notice: If the user explicitly typed "/sticker", "!sticker", "/meme", "!meme", isBareCommand is true -> routes to AI transform!
+        const isDirectStickerPhrase = Boolean(
+          prompt && /^(hazlo sticker|hacelo sticker|sticker)$/i.test(prompt)
         );
-        continue;
-      }
 
-      // Check daily quota limit
-      if (!limiter.canGenerate()) {
-        const status = limiter.getStatus();
-        await sock.sendMessage(
-          remoteJid,
-          {
-            text: `⏳ *Límite diario alcanzado*\n\nEl límite global de ${status.limit} generaciones de hoy se ha agotado.\nSe reiniciará automáticamente a las 00:00 UTC.`
-          },
-          { quoted: msg }
-        );
-        continue;
-      }
+        if (targetImage && (!prompt || isDirectStickerPhrase) && !isBareCommand) {
+          console.log(`\n[Direct Sticker] Converting photo to WhatsApp sticker without AI from: ${remoteJid}`);
+          const rawImageBuffer = await downloadBaileysMedia(targetImage);
+          const stickerBuffer = await createSticker(rawImageBuffer, { removeBg: false });
 
-      console.log(`\n[Request] Mode: [${mode.toUpperCase()}] | From: ${remoteJid}`);
-      console.log(`[Request] Prompt: "${prompt}"`);
-
-      // Send initial acknowledgment to user
-      const ackEmoji = mode === 'meme' ? '🎭' : '🎨';
-      const ackTitle = mode === 'meme' ? 'Generando tu meme...' : 'Generando tu sticker...';
-      await sock.sendMessage(
-        remoteJid,
-        { text: `${ackEmoji} *${ackTitle}*\n"${prompt}"\n_Por favor espera unos segundos..._` },
-        { quoted: msg }
-      );
-
-      // Step 1: Prompt enhancement via Gemini Flash Lite (Cloudflare AI Gateway)
-      console.log(`[Pipeline] 1/4 Enhancing ${mode} prompt with Gemini Flash Lite...`);
-      const enhancedPrompt = await enhancePrompt(prompt, mode);
-      console.log(`[Pipeline] Enhanced prompt: "${enhancedPrompt}"`);
-
-      // Step 2: Generate image with FLUX (Workers AI direct)
-      console.log('[Pipeline] 2/4 Generating 512x512 image with FLUX...');
-      let imageBuffer;
-      try {
-        imageBuffer = await generateImage(enhancedPrompt);
-      } catch (genErr) {
-        if (genErr.isSafetyBlocked) {
-          console.warn('[Pipeline] AI safety filter triggered (3030). Automatically sanitizing prompt with Gemini and retrying...');
-          const sanitizedPrompt = await sanitizePrompt(enhancedPrompt, mode);
-          console.log(`[Pipeline] Sanitized prompt: "${sanitizedPrompt}"`);
-          imageBuffer = await generateImage(sanitizedPrompt);
-        } else {
-          throw genErr;
+          await sock.sendMessage(
+            remoteJid,
+            { sticker: stickerBuffer },
+            { quoted: msg }
+          );
+          console.log(`[Direct Sticker] Delivered successfully! (No AI quota used)\n`);
+          return;
         }
-      }
-      console.log(`[Pipeline] Image generated (${imageBuffer.length} bytes)`);
 
-      // Log raw image exactly as it comes from the image model
-      saveRawImageLog(imageBuffer, mode, prompt);
-
-      // Step 3: Background cutout & WebP sticker creation
-      console.log('[Pipeline] 3/4 Removing dark background and creating WebP sticker...');
-      const stickerBuffer = await createSticker(imageBuffer, { removeBg: true });
-      console.log(`[Pipeline] Sticker ready (${stickerBuffer.length} bytes)`);
-
-      // Step 4: Send sticker as quoted reply
-      console.log('[Pipeline] 4/4 Delivering sticker to WhatsApp...');
-      await sock.sendMessage(
-        remoteJid,
-        { sticker: stickerBuffer },
-        { quoted: msg }
-      );
-
-      const count = limiter.increment();
-      console.log(`[Success] Sticker delivered! Total today: ${count}/${config.bot.dailyLimit}\n`);
-
-    } catch (err) {
-      console.error('[Error] Failed to process sticker request:', err);
-      try {
-        let userErrorMessage = `❌ *Error generando sticker:* ${err.message}`;
-        if (err.isSafetyBlocked) {
+        // If no image is present, validate minimum text prompt length
+        if (!targetImage && (!prompt || prompt.length < 2)) {
           const exampleCmd = mode === 'meme' ? '/meme' : '!sticker';
-          userErrorMessage =
-            `⚠️ *Filtro de seguridad de IA*\n\n` +
-            `Cloudflare bloqueó la imagen por filtros de contenido o marcas protegidas (suele suceder al mencionar nombres de juegos, franquicias o palabras ambiguas).\n\n` +
-            `💡 *Consejo:* En vez del nombre del juego, describe la apariencia física del personaje.\n` +
-            `_Ejemplo:_ En lugar de \`${exampleCmd} personaje de peak\`, prueba con:\n` +
-            `\`${exampleCmd} un explorador con abrigo de nieve, mochila de montañismo y gorrito saludando\``;
-        } else if (err.isQuotaExhausted) {
-          userErrorMessage = `⏳ *Límite de Cloudflare alcanzado*\n\nSe ha agotado la cuota diaria de Cloudflare Workers AI. Se reiniciará automáticamente a las 00:00 UTC.`;
+          await sock.sendMessage(
+            remoteJid,
+            { text: `⚠️ Por favor escribe una descripción para tu sticker, ej:\n\`${exampleCmd} un gato blanco mamado sonriendo\`` },
+            { quoted: msg }
+          );
+          return;
         }
 
+        // Check daily quota limit for AI generations (Atomic)
+        if (!limiter.tryAcquire()) {
+          const status = limiter.getStatus();
+          await sock.sendMessage(
+            remoteJid,
+            {
+              text: `⏳ *Límite diario alcanzado*\n\nEl límite global de ${status.limit} generaciones de hoy se ha agotado.\nSe reiniciará automáticamente a las 00:00 UTC.\n\n💡 _Nota: Aún puedes enviar fotos para convertirlas a stickers directamente._`
+            },
+            { quoted: msg }
+          );
+          return;
+        }
+        quotaAcquired = true;
+
+        const hasReferenceImage = Boolean(targetImage);
+
+        console.log(`\n[Request] Mode: [${mode.toUpperCase()}] | RefImage: ${hasReferenceImage} | BareCmd: ${isBareCommand} | From: ${remoteJid}`);
+        console.log(`[Request] Prompt: "${prompt}"`);
+
+        // Download and preprocess reference image if present
+        let preprocessedImage = null;
+        if (hasReferenceImage) {
+          console.log('[Pipeline] Downloading and preprocessing reference image with Sharp...');
+          const rawBuf = await downloadBaileysMedia(targetImage);
+          preprocessedImage = await preprocessReferenceImage(rawBuf);
+        }
+
+        // Send initial acknowledgment to user
+        const ackEmoji = mode === 'meme' ? '🎭' : '🎨';
+        let ackTitle = mode === 'meme' ? 'Generando tu meme...' : 'Generando tu sticker...';
+        if (hasReferenceImage) {
+          ackTitle = mode === 'meme' ? 'Transformando tu foto a meme...' : 'Transformando tu foto a sticker...';
+        }
+
+        const promptDisplay = prompt ? `"${prompt}"\n` : '';
         await sock.sendMessage(
           remoteJid,
-          { text: userErrorMessage },
+          { text: `${ackEmoji} *${ackTitle}*\n${promptDisplay}_Por favor espera unos segundos..._` },
           { quoted: msg }
         );
-      } catch (replyErr) {
-        console.error('[Error] Could not send error message to user:', replyErr.message);
+
+        // Step 1: Prompt enhancement via Gemini Flash Lite (Cloudflare AI Gateway)
+        console.log(`[Pipeline] 1/4 Enhancing ${mode} prompt with Gemini Flash Lite...`);
+        const enhancedPrompt = await enhancePrompt(prompt, mode, { hasReferenceImage, isBareCommand });
+        console.log(`[Pipeline] Enhanced prompt: "${enhancedPrompt}"`);
+
+        // Step 2: Generate image with FLUX (Workers AI direct)
+        console.log('[Pipeline] 2/4 Generating 512x512 image with FLUX...');
+        let imageBuffer;
+        try {
+          imageBuffer = await generateImage(enhancedPrompt, preprocessedImage);
+        } catch (genErr) {
+          if (genErr.isSafetyBlocked) {
+            console.warn('[Pipeline] AI safety filter triggered (3030). Automatically sanitizing prompt with Gemini and retrying...');
+            const sanitizedPrompt = await sanitizePrompt(enhancedPrompt, mode, { hasReferenceImage });
+            console.log(`[Pipeline] Sanitized prompt: "${sanitizedPrompt}"`);
+            imageBuffer = await generateImage(sanitizedPrompt, preprocessedImage);
+          } else {
+            throw genErr;
+          }
+        }
+        console.log(`[Pipeline] Image generated (${imageBuffer.length} bytes)`);
+
+        // Log raw image exactly as it comes from the image model
+        saveRawImageLog(imageBuffer, mode, prompt || (isBareCommand ? `${mode}_transform` : 'sticker'));
+
+        // Step 3: Background cutout & WebP sticker creation
+        console.log('[Pipeline] 3/4 Removing dark background and creating WebP sticker...');
+        const stickerBuffer = await createSticker(imageBuffer, { removeBg: true });
+        console.log(`[Pipeline] Sticker ready (${stickerBuffer.length} bytes)`);
+
+        // Step 4: Send sticker as quoted reply
+        console.log('[Pipeline] 4/4 Delivering sticker to WhatsApp...');
+        await sock.sendMessage(
+          remoteJid,
+          { sticker: stickerBuffer },
+          { quoted: msg }
+        );
+
+        // Generation and delivery succeeded: keep quota consumed (no refund)
+        quotaAcquired = false;
+
+        const count = limiter.getStatus().used;
+        console.log(`[Success] Sticker delivered! Total today: ${count}/${config.bot.dailyLimit}\n`);
+
+      } catch (err) {
+        console.error('[Error] Failed to process sticker request:', err);
+
+        if (quotaAcquired) {
+          try {
+            limiter.refund();
+          } catch (refundErr) {
+            console.error('[Limiter] Error during quota refund:', refundErr.message);
+          }
+          quotaAcquired = false;
+        }
+
+        if (remoteJid && sock) {
+          try {
+            let userErrorMessage = `❌ *Error generando sticker:* ${err.message}`;
+            if (err.isSafetyBlocked) {
+              const exampleCmd = mode === 'meme' ? '/meme' : '!sticker';
+              userErrorMessage =
+                `⚠️ *Filtro de seguridad de IA*\n\n` +
+                `Cloudflare bloqueó la imagen por filtros de contenido o marcas protegidas.\n\n` +
+                `💡 *Consejo:* Describe la apariencia física en lugar de nombres de marcas o personajes protegidos.\n` +
+                `_Ejemplo:_ En lugar de \`${exampleCmd} personaje de peak\`, prueba con:\n` +
+                `\`${exampleCmd} un explorador con abrigo de nieve, mochila de montañismo y gorrito saludando\``;
+            } else if (err.isQuotaExhausted) {
+              userErrorMessage = `⏳ *Límite de Cloudflare alcanzado*\n\nSe ha agotado la cuota diaria de Cloudflare Workers AI. Se reiniciará automáticamente a las 00:00 UTC.`;
+            }
+
+            await sock.sendMessage(
+              remoteJid,
+              { text: userErrorMessage },
+              { quoted: msg }
+            );
+          } catch (replyErr) {
+            console.error('[Error] Could not send error message to user:', replyErr.message);
+          }
+        }
       }
-    }
+    })();
   }
 }
 
-// Start WhatsApp connection
-connectToWhatsApp(handleIncomingMessages).catch((err) => {
-  console.error('[Fatal] Error starting bot:', err);
-  process.exit(1);
-});
+// Start WhatsApp connection when run directly as the main script
+const isMainScript = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMainScript && process.env.NODE_ENV !== 'test') {
+  connectToWhatsApp(handleIncomingMessages).catch((err) => {
+    console.error('[Fatal] Error starting bot:', err);
+    process.exit(1);
+  });
+}
+
+export {
+  downloadBaileysMedia,
+  handleIncomingMessages,
+  preprocessReferenceImage,
+  cleanGroupPrompt
+};

@@ -209,6 +209,7 @@ export async function createSticker(imageBuffer, options = {}) {
   if (!removeBg) {
     // Full scene photo sticker (sin recorte)
     webpBuffer = await sharp(imageBuffer)
+      .rotate()
       .resize(512, 512, {
         fit: 'contain',
         background: { r: 0, g: 0, b: 0, alpha: 0 }
@@ -266,6 +267,7 @@ export async function createSticker(imageBuffer, options = {}) {
     } catch (err) {
       console.warn('[Sticker] Background cutout warning, using fallback WebP conversion:', err.message);
       webpBuffer = await sharp(imageBuffer)
+        .rotate()
         .resize(512, 512, {
           fit: 'contain',
           background: { r: 0, g: 0, b: 0, alpha: 0 }

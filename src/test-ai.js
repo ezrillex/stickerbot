@@ -33,20 +33,44 @@ async function runTest() {
     const stickerBuffer = await createSticker(imageBuffer);
     console.log(`[3/3] SUCCESS! Sticker size: ${stickerBuffer.length} bytes\n`);
 
+    // 4. Reference image edit flow (Image + instruction -> AI sticker)
+    console.log('[4/4] Testing reference image editing (FLUX 2 Klein + Gemini hasReferenceImage)...');
+    const sharp = (await import('sharp')).default;
+    const preprocessedInput = await sharp(imageBuffer)
+      .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+
+    const editPrompt = 'add colorful festive birthday party hat and confetti';
+    const editEnhanced = await enhancePrompt(editPrompt, 'sticker', { hasReferenceImage: true });
+    console.log(`[4/4] SUCCESS! Edit enhanced prompt:\n      "${editEnhanced}"\n`);
+
+    const editImageBuffer = await generateImage(editEnhanced, preprocessedInput);
+    console.log(`[4/4] SUCCESS! Generated edited image size: ${editImageBuffer.length} bytes\n`);
+
+    const editStickerBuffer = await createSticker(editImageBuffer, { removeBg: true });
+    console.log(`[4/4] SUCCESS! Edited sticker size: ${editStickerBuffer.length} bytes\n`);
+
     if (!fs.existsSync(TEMP_DIR)) {
       fs.mkdirSync(TEMP_DIR, { recursive: true });
     }
 
     const rawPath = path.join(TEMP_DIR, 'test_raw.jpg');
     const stickerPath = path.join(TEMP_DIR, 'test_sticker.webp');
+    const editRawPath = path.join(TEMP_DIR, 'test_edit_raw.jpg');
+    const editStickerPath = path.join(TEMP_DIR, 'test_edit_sticker.webp');
 
     fs.writeFileSync(rawPath, imageBuffer);
     fs.writeFileSync(stickerPath, stickerBuffer);
+    fs.writeFileSync(editRawPath, editImageBuffer);
+    fs.writeFileSync(editStickerPath, editStickerBuffer);
 
     console.log('==============================================');
     console.log('✅ ALL TESTS PASSED SUCCESSFULLY!');
-    console.log(`- Saved raw image:     ${rawPath}`);
-    console.log(`- Saved final sticker: ${stickerPath}`);
+    console.log(`- Saved raw image:          ${rawPath}`);
+    console.log(`- Saved final sticker:      ${stickerPath}`);
+    console.log(`- Saved edited raw image:   ${editRawPath}`);
+    console.log(`- Saved edited sticker:     ${editStickerPath}`);
     console.log('==============================================');
   } catch (err) {
     console.error('\n❌ TEST FAILED with error:');

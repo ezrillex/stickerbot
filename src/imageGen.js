@@ -1,12 +1,20 @@
 import { config } from './config.js';
 
-export async function generateImage(prompt) {
+export async function generateImage(prompt, inputImageBuffer = null) {
   const url = config.cloudflare.fluxUrl;
 
   const formData = new FormData();
   formData.append('prompt', prompt);
   formData.append('width', '512');
   formData.append('height', '512');
+
+  if (inputImageBuffer) {
+    formData.append(
+      'input_image_0',
+      new Blob([inputImageBuffer], { type: 'image/jpeg' }),
+      'input.jpg'
+    );
+  }
 
   const headers = {
     'Authorization': `Bearer ${config.cloudflare.apiToken}`

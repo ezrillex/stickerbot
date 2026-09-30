@@ -46,6 +46,10 @@ export function getSocket() {
   return sockInstance;
 }
 
+export function setSocket(sock) {
+  sockInstance = sock;
+}
+
 export async function connectToWhatsApp(onMessageCallback) {
   console.log('[WhatsApp] Initializing connection...');
 
