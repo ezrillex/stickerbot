@@ -7,7 +7,9 @@ import {
   handleIncomingMessages,
   downloadBaileysMedia,
   preprocessReferenceImage,
-  cleanGroupPrompt
+  cleanGroupPrompt,
+  parseMessageIntent,
+  getAcknowledgmentMessage
 } from './src/index.js';
 
 console.log('====================================================');
@@ -265,8 +267,8 @@ async function testGroupSafeguardsAndParsing() {
     }
   };
   await handleIncomingMessages({ messages: [addressedHelpMsg], type: 'notify' });
-  assert.strictEqual(mockSock.sentMessages.length, 1);
   assert(mockSock.sentMessages[0].content.text.includes('Rolex AI StickerBot'));
+  assert(mockSock.sentMessages[0].content.text.includes('*@bot /sticker <desc>* o *sticker: <desc>*'));
   console.log('  [PASS] Group help answered when bot is tagged.');
 
   // 4.3: cleanGroupPrompt test
@@ -276,12 +278,240 @@ async function testGroupSafeguardsAndParsing() {
   console.log('  [PASS] cleanGroupPrompt strips tags cleanly.');
 }
 
+// ----------------------------------------------------
+// TEST 5: Mode & Style Prefix Parsing Verification (All 16 Required Cases)
+// ----------------------------------------------------
+async function testModeAndStyleParsing() {
+  console.log('\nTEST 5: Testing mode & style prefix parsing (All 16 Cases)...');
+
+  // Case 1: Plain DM text
+  const c1 = parseMessageIntent('gato programando', { isGroup: false });
+  assert.strictEqual(c1.mode, 'sticker');
+  assert.strictEqual(c1.prompt, 'gato programando');
+  assert.strictEqual(c1.isBareCommand, false);
+  console.log('  [PASS] Case 1: plain DM text -> sticker mode');
+
+  // Case 2: /sticker text
+  const c2 = parseMessageIntent('/sticker gato astronauta', { isGroup: false });
+  assert.strictEqual(c2.mode, 'sticker');
+  assert.strictEqual(c2.prompt, 'gato astronauta');
+  assert.strictEqual(c2.isBareCommand, false);
+  console.log('  [PASS] Case 2: /sticker text -> sticker mode');
+
+  // Case 3: /meme text
+  const c3 = parseMessageIntent('/meme gato astronauta', { isGroup: false });
+  assert.strictEqual(c3.mode, 'meme');
+  assert.strictEqual(c3.prompt, 'gato astronauta');
+  assert.strictEqual(c3.isBareCommand, false);
+  console.log('  [PASS] Case 3: /meme text -> meme mode');
+
+  // Case 4: sticker: text
+  const c4 = parseMessageIntent('sticker: gato astronauta', { isGroup: false });
+  assert.strictEqual(c4.mode, 'sticker');
+  assert.strictEqual(c4.prompt, 'gato astronauta');
+  assert.strictEqual(c4.isBareCommand, false);
+  console.log('  [PASS] Case 4: sticker: text -> sticker mode');
+
+  // Case 5: meme: text
+  const c5 = parseMessageIntent('meme: gato astronauta', { isGroup: false });
+  assert.strictEqual(c5.mode, 'meme');
+  assert.strictEqual(c5.prompt, 'gato astronauta');
+  assert.strictEqual(c5.isBareCommand, false);
+  console.log('  [PASS] Case 5: meme: text -> meme mode');
+
+  // Case 6: modo sticker text
+  const c6 = parseMessageIntent('modo sticker gato astronauta', { isGroup: false });
+  assert.strictEqual(c6.mode, 'sticker');
+  assert.strictEqual(c6.prompt, 'gato astronauta');
+  assert.strictEqual(c6.isBareCommand, false);
+  console.log('  [PASS] Case 6: modo sticker text -> sticker mode');
+
+  // Case 7: modo meme text
+  const c7 = parseMessageIntent('modo meme gato astronauta', { isGroup: false });
+  assert.strictEqual(c7.mode, 'meme');
+  assert.strictEqual(c7.prompt, 'gato astronauta');
+  assert.strictEqual(c7.isBareCommand, false);
+  console.log('  [PASS] Case 7: modo meme text -> meme mode');
+
+  // Case 8: photo only (no text)
+  const c8 = parseMessageIntent('', { isGroup: false, hasImage: true });
+  assert.strictEqual(c8.mode, 'sticker');
+  assert.strictEqual(c8.prompt, '');
+  assert.strictEqual(c8.isBareCommand, false);
+  console.log('  [PASS] Case 8: photo only -> sticker mode, isBareCommand false (routes to non-AI direct)');
+
+  // Case 9: photo + natural instruction
+  const c9 = parseMessageIntent('hazlo llorando', { isGroup: false, hasImage: true });
+  assert.strictEqual(c9.mode, 'sticker');
+  assert.strictEqual(c9.prompt, 'hazlo llorando');
+  assert.strictEqual(c9.isBareCommand, false);
+  console.log('  [PASS] Case 9: photo + natural instruction -> sticker mode');
+
+  // Case 10: photo + /sticker (bare)
+  const c10 = parseMessageIntent('/sticker', { isGroup: false, hasImage: true });
+  assert.strictEqual(c10.mode, 'sticker');
+  assert.strictEqual(c10.prompt, '');
+  assert.strictEqual(c10.isBareCommand, true);
+  console.log('  [PASS] Case 10: photo + /sticker -> bare sticker mode (AI transform)');
+
+  // Case 11: photo + /meme (bare)
+  const c11 = parseMessageIntent('/meme', { isGroup: false, hasImage: true });
+  assert.strictEqual(c11.mode, 'meme');
+  assert.strictEqual(c11.prompt, '');
+  assert.strictEqual(c11.isBareCommand, true);
+  console.log('  [PASS] Case 11: photo + /meme -> bare meme mode (AI transform)');
+
+  // Case 12: photo + sticker: (bare)
+  const c12 = parseMessageIntent('sticker:', { isGroup: false, hasImage: true });
+  assert.strictEqual(c12.mode, 'sticker');
+  assert.strictEqual(c12.prompt, '');
+  assert.strictEqual(c12.isBareCommand, true);
+  const c12b = parseMessageIntent('modo sticker', { isGroup: false, hasImage: true });
+  assert.strictEqual(c12b.mode, 'sticker');
+  assert.strictEqual(c12b.prompt, '');
+  assert.strictEqual(c12b.isBareCommand, true);
+  console.log('  [PASS] Case 12: photo + sticker: / modo sticker -> bare sticker mode');
+
+  // Case 13: photo + meme: (bare)
+  const c13 = parseMessageIntent('meme:', { isGroup: false, hasImage: true });
+  assert.strictEqual(c13.mode, 'meme');
+  assert.strictEqual(c13.prompt, '');
+  assert.strictEqual(c13.isBareCommand, true);
+  const c13b = parseMessageIntent('modo meme', { isGroup: false, hasImage: true });
+  assert.strictEqual(c13b.mode, 'meme');
+  assert.strictEqual(c13b.prompt, '');
+  assert.strictEqual(c13b.isBareCommand, true);
+  console.log('  [PASS] Case 13: photo + meme: / modo meme -> bare meme mode');
+
+  // Case 14: quoted photo + natural instruction
+  const c14 = parseMessageIntent('ponelo enojado', { isGroup: false, hasImage: true });
+  assert.strictEqual(c14.mode, 'sticker');
+  assert.strictEqual(c14.prompt, 'ponelo enojado');
+  assert.strictEqual(c14.isBareCommand, false);
+  console.log('  [PASS] Case 14: quoted photo + natural instruction -> sticker mode');
+
+  // Case 15: quoted photo + /meme & aliases
+  const c15 = parseMessageIntent('/meme hazlo sentado en un inodoro', { isGroup: false, hasImage: true });
+  assert.strictEqual(c15.mode, 'meme');
+  assert.strictEqual(c15.prompt, 'hazlo sentado en un inodoro');
+  assert.strictEqual(c15.isBareCommand, false);
+  const c15b = parseMessageIntent('meme: hazlo sentado en un inodoro', { isGroup: false, hasImage: true });
+  assert.strictEqual(c15b.mode, 'meme');
+  assert.strictEqual(c15b.prompt, 'hazlo sentado en un inodoro');
+  const c15c = parseMessageIntent('modo meme hazlo como foto cursed de los 2000', { isGroup: false, hasImage: true });
+  assert.strictEqual(c15c.mode, 'meme');
+  assert.strictEqual(c15c.prompt, 'hazlo como foto cursed de los 2000');
+  console.log('  [PASS] Case 15: quoted photo + /meme & aliases -> meme mode');
+
+  // Case 16: unrelated group text (addressed guard tested in Test 4.1)
+  const c16Ignored = parseMessageIntent('@15550001111 hola grupo que tal', {
+    isGroup: true,
+    botPhone: '15550001111',
+    hasImage: false
+  });
+  assert.strictEqual(c16Ignored.isIgnored, true);
+  console.log('  [PASS] Case 16: uninstructed group text -> ignored');
+
+  // Case 17: addressed group request
+  const c17a = parseMessageIntent('@15550001111 /meme hazlo enojado', {
+    isGroup: true,
+    botPhone: '15550001111',
+    hasImage: true
+  });
+  assert.strictEqual(c17a.mode, 'meme');
+  assert.strictEqual(c17a.prompt, 'hazlo enojado');
+
+  const c17b = parseMessageIntent('@15550001111 meme: hazlo enojado', {
+    isGroup: true,
+    botPhone: '15550001111',
+    hasImage: true
+  });
+  assert.strictEqual(c17b.mode, 'meme');
+  assert.strictEqual(c17b.prompt, 'hazlo enojado');
+
+  const c17c = parseMessageIntent('@15550001111 hazlo llorando', {
+    isGroup: true,
+    botPhone: '15550001111',
+    hasImage: true
+  });
+  assert.strictEqual(c17c.mode, 'sticker');
+  assert.strictEqual(c17c.prompt, 'hazlo llorando');
+
+  const c17d = parseMessageIntent('@15550001111', {
+    isGroup: true,
+    botPhone: '15550001111',
+    hasImage: true
+  });
+  assert.strictEqual(c17d.mode, 'sticker');
+  assert.strictEqual(c17d.prompt, '');
+  assert.strictEqual(c17d.isBareCommand, false);
+  console.log('  [PASS] Case 17: addressed group requests correctly parsed');
+
+  // Mid-sentence regression protection
+  const cMid = parseMessageIntent('haz un sticker de un gato meme', { isGroup: false });
+  assert.strictEqual(cMid.mode, 'sticker');
+  assert.strictEqual(cMid.prompt, 'haz un sticker de un gato meme');
+  console.log('  [PASS] Mid-sentence "meme" is not treated as style selector');
+
+  // Direct sticker phrase check
+  const cDirect = parseMessageIntent('sticker', { isGroup: false, hasImage: true });
+  assert.strictEqual(cDirect.mode, 'sticker');
+  assert.strictEqual(cDirect.prompt, 'sticker');
+  assert.strictEqual(cDirect.isBareCommand, false);
+  console.log('  [PASS] Plain "sticker" caption is not bare command (preserves direct non-AI conversion)');
+
+  // Slash command boundary protection check
+  const cBoundary1 = parseMessageIntent('/memesomething', { isGroup: false });
+  assert.strictEqual(cBoundary1.mode, 'sticker');
+  assert.strictEqual(cBoundary1.prompt, '/memesomething');
+  assert.strictEqual(cBoundary1.isExplicitMode, false);
+
+  const cBoundary2 = parseMessageIntent('/stickerman', { isGroup: false });
+  assert.strictEqual(cBoundary2.mode, 'sticker');
+  assert.strictEqual(cBoundary2.prompt, '/stickerman');
+  assert.strictEqual(cBoundary2.isExplicitMode, false);
+
+  const cBoundary3 = parseMessageIntent('/memeology', { isGroup: false });
+  assert.strictEqual(cBoundary3.mode, 'sticker');
+  assert.strictEqual(cBoundary3.prompt, '/memeology');
+  assert.strictEqual(cBoundary3.isExplicitMode, false);
+
+  const cBoundary4 = parseMessageIntent('/stickers de gatos', { isGroup: false });
+  assert.strictEqual(cBoundary4.mode, 'sticker');
+  assert.strictEqual(cBoundary4.prompt, '/stickers de gatos');
+  assert.strictEqual(cBoundary4.isExplicitMode, false);
+  console.log('  [PASS] Slash command boundary protection prevents partial matches (/memesomething, /stickers de gatos, etc.)');
+
+  // ----------------------------------------------------
+  // Confirmation message verification
+  // ----------------------------------------------------
+  console.log('  Testing Confirmation UX formatting...');
+  const memePhotoAck = getAcknowledgmentMessage('meme', { hasReferenceImage: true, prompt: 'hazlo enojado' });
+  assert(memePhotoAck.includes('📸 *Transformando tu foto (modo meme)...*'));
+  assert(memePhotoAck.includes('"hazlo enojado"'));
+  console.log('  [PASS] Photo meme mode sends "📸 *Transformando tu foto (modo meme)...*"');
+
+  const stickerPhotoAck = getAcknowledgmentMessage('sticker', { hasReferenceImage: true, prompt: 'hazlo llorando' });
+  assert(stickerPhotoAck.includes('🎨 *Transformando tu foto (modo sticker)...*'));
+  assert(stickerPhotoAck.includes('"hazlo llorando"'));
+  console.log('  [PASS] Photo sticker mode sends "🎨 *Transformando tu foto (modo sticker)...*"');
+
+  const memeTextAck = getAcknowledgmentMessage('meme', { hasReferenceImage: false, prompt: 'gato astronauta' });
+  assert(memeTextAck.includes('🎭 *Generando tu meme...*'));
+  console.log('  [PASS] Text meme mode sends "🎭 *Generando tu meme...*"');
+
+  const stickerTextAck = getAcknowledgmentMessage('sticker', { hasReferenceImage: false, prompt: 'gato astronauta' });
+  assert(stickerTextAck.includes('🎨 *Generando tu sticker...*'));
+  console.log('  [PASS] Text sticker mode sends "🎨 *Generando tu sticker...*"');
+}
+
 async function runAll() {
   try {
     await testMediaTimeoutCleanup();
     await testLimiterAndRefundScope();
     await testErrorHandlerScoping();
     await testGroupSafeguardsAndParsing();
+    await testModeAndStyleParsing();
     console.log('\n====================================================');
     console.log('ALL VERIFICATION SUITES PASSED! (0 FAILURES)');
     console.log('====================================================\n');

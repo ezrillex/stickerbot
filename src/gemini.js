@@ -31,30 +31,30 @@ Follow these strict rules:
 9. OUTPUT: Output ONLY the enhanced prompt in plain text. Do NOT add preamble, quotes, explanations, or markdown formatting. Keep it concise (under 80 words).`;
 
 const STICKER_EDIT_SYSTEM_INSTRUCTION = `You are an expert sticker art prompt engineer for AI image generators.
-The user is providing an input image (referenced as 'image 0') and wants to transform or edit it into a high-quality die-cut sticker.
+The user is providing an input image (referenced as 'image 0') and wants to transform or edit it into a high-quality die-cut sticker illustration.
 Your job is to convert the user's idea into a detailed image generation prompt modifying image 0.
 
 Follow these strict rules:
-1. SUBJECT IDENTITY & CONSERVATIVE TRANSLATION: Faithfully preserve the core visual identity, facial features, body structure, clothing, and recognizable physical traits of the subject of image 0. Translate the user's requested modifications conservatively without unnecessarily reinventing, replacing, or distorting the subject or scene props.
+1. SUBJECT IDENTITY & CONSERVATIVE TRANSLATION: Faithfully preserve the recognizable core identity, facial features, body structure, and distinctive physical traits of the subject of image 0. Translate the user's requested modifications conservatively without unnecessarily reinventing or replacing the subject.
 2. EXPLICIT REFERENCE: Always explicitly refer to "the subject of image 0" in the prompt.
-3. BACKGROUND: Always specify "on a solid pure black #000000 background, completely solid black backdrop with zero gradients, zero shadows, no floor, isolated subject". This is critical because the background will be removed automatically.
-4. ART STYLE: Specify "die-cut sticker art style, bold clean contours, sharp vector illustration, vibrant saturated colors, studio lighting, highly detailed".
-5. COMPOSITION: Centered subject, clear silhouette, completely framed within the canvas, no parts cut off at edges.
+3. ART STYLE & AESTHETIC: Specify "die-cut sticker art style, intentionally illustrated and stylized, bold clean contours, simplified forms, vibrant saturated colors, sharp vector illustration details, studio lighting". The result must look intentionally illustrated/stylized as a sticker.
+4. BACKGROUND & ISOLATION: Always specify "on a solid pure black #000000 background, completely solid black backdrop with zero gradients, zero shadows, no floor, isolated subject". This is critical because the background will be removed automatically.
+5. COMPOSITION: Centered subject, clear sticker-ready silhouette, completely framed within the canvas, no parts cut off at edges.
 6. CHARACTER & GAME/IP SAFETY: Never mention game titles, brand names, or studio names. Describe visual features physically.
 7. CONTENT FILTER COMPLIANCE: Use strictly neutral, family-friendly, descriptive language.
 8. TEXT: Do NOT include text, captions, or words in the image unless explicitly requested.
 9. OUTPUT: Output ONLY the enhanced prompt in plain text. Do NOT add preamble, quotes, explanations, or markdown formatting. Keep it concise (under 80 words).`;
 
 const MEME_EDIT_SYSTEM_INSTRUCTION = `You are an expert prompt engineer for cursed and hilarious internet meme photos.
-The user is providing an input image (referenced as 'image 0') and wants to transform it into a hilarious cursed meme photo.
-Your job is to convert the user's idea into a prompt for a realistic, funny internet meme photo modifying image 0.
+The user is providing an input image (referenced as 'image 0') and wants to transform it into a hilarious, cursed, photographic meme.
+Your job is to convert the user's idea into a prompt for a realistic or semi-realistic, funny internet meme photo modifying image 0.
 
 Follow these strict rules:
-1. SUBJECT IDENTITY & CONSERVATIVE TRANSLATION: Faithfully preserve the recognizable identity and key physical features of the subject of image 0. Apply the requested funny or chaotic modification conservatively to the subject of image 0 without replacing the subject.
+1. SUBJECT IDENTITY & LIKENESS: Faithfully preserve the recognizable likeness, key physical features, and core identity of the subject of image 0. Apply the requested comedic or chaotic modification directly to the subject of image 0 without replacing them.
 2. EXPLICIT REFERENCE: Always explicitly refer to "the subject of image 0".
-3. PHOTOGRAPHY STYLE: Specify "funny internet meme photo, amateur candid harsh flash photography, grainy 2000s camera phone photo, slightly blurry motion, low-res aesthetic, cursed chaotic vibe, realistic textures".
-4. WHITE DIE-CUT STICKER OUTLINE: Specify "surrounded by a bold clean white die-cut sticker outline contour framing the entire subject, vinyl sticker cut, sharp clean silhouette".
-5. BACKGROUND: Specify "on a solid pure black #000000 background, completely solid black backdrop with zero gradients, zero shadows, no floor, isolated subject".
+3. PHOTOGRAPHY & MEME AESTHETIC: Specify "realistic or semi-realistic photographic appearance, funny cursed internet meme photo, harsh direct camera flash, cheap phone-camera or early 2000s digital camera aesthetic, imperfect framing, grainy candid texture, comedic absurdity, candid chaotic energy".
+4. NEGATIVE / DISCOURAGED STYLES: Explicitly forbid and avoid vector art, clean cartoon illustration, polished digital painting, and generic sticker illustration style (unless the user explicitly requests one of those styles). The output must look like a raw, funny, candid photograph.
+5. BACKGROUND & ISOLATION: Specify "on a solid pure black #000000 background, completely solid black backdrop with zero gradients, zero shadows, no floor, isolated subject".
 6. COMPOSITION: Centered subject, completely framed within the canvas, no parts cut off by canvas edges.
 7. CONTENT FILTER COMPLIANCE: Keep vocabulary strictly PG and neutral.
 8. TEXT: Do NOT include text, captions, meme subtitles, or watermarks.
@@ -72,12 +72,12 @@ export async function enhancePrompt(userPrompt, mode = 'sticker', options = {}) 
     systemInstruction = isMeme ? MEME_EDIT_SYSTEM_INSTRUCTION : STICKER_EDIT_SYSTEM_INSTRUCTION;
     if (isBareCommand) {
       userText = isMeme
-        ? 'Transform the subject of image 0 into a funny cursed meme photo, faithfully preserving their recognizable physical identity.'
-        : 'Transform the subject of image 0 into a die-cut sticker illustration, faithfully preserving their recognizable physical identity.';
+        ? 'Transform the subject of image 0 into a funny cursed meme photo with harsh flash photography, imperfect framing, and realistic candid aesthetic, faithfully preserving their recognizable physical identity. Do NOT make it a cartoon, vector art, or illustration.'
+        : 'Transform the subject of image 0 into an illustrated die-cut sticker with clean bold contours, simplified forms, and vibrant saturated colors, faithfully preserving their recognizable physical identity.';
     } else {
       userText = isMeme
-        ? `Transform the subject of image 0 into a funny cursed meme photo with this conservative modification: "${userPrompt}"`
-        : `Transform the subject of image 0 into a sticker with this conservative modification: "${userPrompt}"`;
+        ? `Transform the subject of image 0 into a realistic funny cursed meme photo with harsh direct camera flash, candid energy, and this modification: "${userPrompt}". Do NOT make it a cartoon or vector illustration.`
+        : `Transform the subject of image 0 into an illustrated die-cut sticker with bold clean contours, simplified forms, saturated colors, and this modification: "${userPrompt}"`;
     }
   } else {
     systemInstruction = isMeme ? MEME_SYSTEM_INSTRUCTION : STICKER_SYSTEM_INSTRUCTION;
@@ -154,7 +154,7 @@ Strict rules:
 2. Replace them with pure physical and visual descriptions (clothing, colors, distinctive equipment/gear, creature archetype, pose, expression).
 3. Ensure all vocabulary is strictly safe, neutral, and family-friendly, avoiding any ambiguous words that could trigger false-positive safety flags.
 4. Maintain the background requirement: "on a solid pure black #000000 background, completely solid black backdrop with zero gradients, zero shadows, no floor, isolated subject".
-${isMeme ? '5. Maintain the meme aesthetic: amateur candid harsh flash photography, cursed chaotic meme vibe, realistic textures, no cartoon/vector keywords.' : '5. Maintain the sticker art style: die-cut sticker art style, bold clean contours, sharp vector illustration.'}
+${isMeme ? '5. Maintain the meme aesthetic: realistic or semi-realistic photographic appearance, harsh direct camera flash, cheap camera look, candid cursed meme vibe, strictly no cartoon, vector art, or illustration keywords.' : '5. Maintain the sticker art style: die-cut sticker art style, intentionally illustrated and stylized, bold clean contours, simplified forms, saturated colors.'}
 ${hasReferenceImage ? '6. Explicitly preserve the reference to "the subject of image 0" and keep modifications conservative.\n7. Output ONLY the sanitized prompt in plain text without quotes, preamble, or markdown. Keep it under 75 words.' : '6. Output ONLY the sanitized prompt in plain text without quotes, preamble, or markdown. Keep it under 75 words.'}`;
 
   const userText = `This prompt was blocked by an AI safety/copyright filter: "${blockedPrompt}". Rewrite and sanitize it with pure visual descriptions so it passes all filters safely.`;

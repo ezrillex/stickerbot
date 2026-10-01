@@ -113,6 +113,96 @@ function cleanGroupPrompt(text, botPhone) {
   return cleaned.trim();
 }
 
+function parseMessageIntent(rawText, { isGroup = false, botPhone = '', hasImage = false } = {}) {
+  const cleanedText = isGroup ? cleanGroupPrompt(rawText || '', botPhone) : (rawText || '').trim();
+
+  // 1. Utility commands first
+  if (/^(!help|\/help)(\s|$)/i.test(cleanedText)) {
+    return { isUtility: true, utilityType: 'help' };
+  }
+  if (/^(!status|\/status)(\s|$)/i.test(cleanedText)) {
+    return { isUtility: true, utilityType: 'status' };
+  }
+
+  // 2. Explicit slash/bang mode commands
+  const slashMatch = cleanedText.match(/^(!meme\b|\/meme\b|!sticker\b|\/sticker\b)(?::?\s*([\s\S]*))?$/i);
+  if (slashMatch) {
+    const cmd = slashMatch[1].toLowerCase();
+    const mode = (cmd === '/meme' || cmd === '!meme') ? 'meme' : 'sticker';
+    const prompt = (slashMatch[2] || '').trim();
+    return {
+      isUtility: false,
+      mode,
+      prompt,
+      isBareCommand: !prompt,
+      isExplicitMode: true
+    };
+  }
+
+  // 3. Natural style prefixes (only at the beginning of the text)
+  const memeAliasMatch = cleanedText.match(/^(?:meme\s*:\s*|modo\s+meme\b(?:\s*:)?\s*)([\s\S]*)$/i);
+  if (memeAliasMatch) {
+    const prompt = memeAliasMatch[1].trim();
+    return {
+      isUtility: false,
+      mode: 'meme',
+      prompt,
+      isBareCommand: !prompt,
+      isExplicitMode: true
+    };
+  }
+
+  const stickerAliasMatch = cleanedText.match(/^(?:sticker\s*:\s*|modo\s+sticker\b(?:\s*:)?\s*)([\s\S]*)$/i);
+  if (stickerAliasMatch) {
+    const prompt = stickerAliasMatch[1].trim();
+    return {
+      isUtility: false,
+      mode: 'sticker',
+      prompt,
+      isBareCommand: !prompt,
+      isExplicitMode: true
+    };
+  }
+
+  // 4. Fallback rules
+  if (!isGroup) {
+    return {
+      isUtility: false,
+      mode: 'sticker',
+      prompt: cleanedText,
+      isBareCommand: false,
+      isExplicitMode: false
+    };
+  }
+
+  // In groups:
+  if (hasImage) {
+    return {
+      isUtility: false,
+      mode: 'sticker',
+      prompt: cleanedText,
+      isBareCommand: false,
+      isExplicitMode: false
+    };
+  }
+
+  // Unaccompanied text in group without an explicit mode prefix or image -> ignore
+  return {
+    isIgnored: true
+  };
+}
+
+function getAcknowledgmentMessage(mode, { hasReferenceImage = false, prompt = '' } = {}) {
+  let ackEmoji = mode === 'meme' ? '🎭' : '🎨';
+  let ackTitle = mode === 'meme' ? 'Generando tu meme...' : 'Generando tu sticker...';
+  if (hasReferenceImage) {
+    ackEmoji = mode === 'meme' ? '📸' : '🎨';
+    ackTitle = mode === 'meme' ? 'Transformando tu foto (modo meme)...' : 'Transformando tu foto (modo sticker)...';
+  }
+  const promptDisplay = prompt ? `"${prompt}"\n` : '';
+  return `${ackEmoji} *${ackTitle}*\n${promptDisplay}_Por favor espera unos segundos..._`;
+}
+
 async function preprocessReferenceImage(inputBuffer) {
   return sharp(inputBuffer)
     .rotate() // auto-orient based on smartphone EXIF orientation tag
@@ -214,97 +304,89 @@ async function handleIncomingMessages({ messages, type }) {
 
           console.log(`[Group] Message addressed to bot in ${remoteJid}: "${rawText}"`);
 
-          // Handle group help / status
-          if (/(!help|\/help)/i.test(rawText)) {
-            const status = limiter.getStatus();
-            const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
-              `Mencióname o responde a mis mensajes con:\n` +
-              `• *@bot <desc>* — Genera sticker de ilustración\n` +
-              `• *@bot /meme <desc>* — Genera foto meme cursed\n` +
-              `• *@bot (en foto o respondiendo a foto)* sin texto — Convierte a sticker directo (sin gastar cuota IA)\n` +
-              `• *@bot <instrucción> (respondiendo a foto)* — Edita la foto con IA (ej: \`@bot hazlo llorando\`, \`@bot ponelo enojado\`)\n` +
-              `• *@bot /sticker* o *@bot /meme (con foto)* — Transforma la foto al modo elegido\n\n` +
-              `• *Uso hoy:* ${status.used}/${status.limit} generaciones IA (Reinicia a las 00:00 UTC)`;
-            await sock.sendMessage(remoteJid, { text: helpMessage }, { quoted: msg });
+          const parsed = parseMessageIntent(rawText, {
+            isGroup: true,
+            botPhone,
+            hasImage: Boolean(targetImage)
+          });
+
+          if (parsed.isIgnored) {
             return;
           }
 
-          if (/(!status|\/status)/i.test(rawText)) {
-            const status = limiter.getStatus();
-            const statusMessage = `📊 *Rolex AI Status*\n\n` +
-              `• *Usados:* ${status.used} / ${status.limit}\n` +
-              `• *Disponibles:* ${status.remaining}\n` +
-              `• *Reinicia:* 00:00 UTC`;
-            await sock.sendMessage(remoteJid, { text: statusMessage }, { quoted: msg });
-            return;
+          if (parsed.isUtility) {
+            if (parsed.utilityType === 'help') {
+              const status = limiter.getStatus();
+              const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
+                `Mencióname o responde a mis mensajes con:\n` +
+                `• *@bot /sticker <desc>* o *sticker: <desc>* — Genera sticker de ilustración\n` +
+                `• *@bot /meme <desc>* o *meme: <desc>* — Genera foto meme cursed\n` +
+                `• *@bot (en foto o respondiendo a foto)* sin texto — Convierte a sticker directo (sin gastar cuota IA)\n` +
+                `• *@bot <instrucción> (respondiendo a foto)* — Edita foto en modo sticker (ej: \`@bot hazlo llorando\`)\n` +
+                `• *@bot /meme* o *meme:* (con foto) — Transforma foto a modo meme\n` +
+                `• *@bot /sticker* o *sticker:* (con foto) — Transforma foto a modo sticker\n\n` +
+                `• *Uso hoy:* ${status.used}/${status.limit} generaciones IA (Reinicia a las 00:00 UTC)`;
+              await sock.sendMessage(remoteJid, { text: helpMessage }, { quoted: msg });
+              return;
+            }
+
+            if (parsed.utilityType === 'status') {
+              const status = limiter.getStatus();
+              const statusMessage = `📊 *Rolex AI Status*\n\n` +
+                `• *Usados:* ${status.used} / ${status.limit}\n` +
+                `• *Disponibles:* ${status.remaining}\n` +
+                `• *Reinicia:* 00:00 UTC`;
+              await sock.sendMessage(remoteJid, { text: statusMessage }, { quoted: msg });
+              return;
+            }
           }
 
-          const memeMatch = rawText.match(/(!meme|\/meme)\s*(.*)/i);
-          const stickerMatch = rawText.match(/(!sticker|\/sticker)\s*(.*)/i);
-
-          if (memeMatch) {
-            mode = 'meme';
-            prompt = cleanGroupPrompt(memeMatch[2], botPhone);
-            if (!prompt) isBareCommand = true;
-          } else if (stickerMatch) {
-            mode = 'sticker';
-            prompt = cleanGroupPrompt(stickerMatch[2], botPhone);
-            if (!prompt) isBareCommand = true;
-          } else if (targetImage) {
-            // Tagged with a photo or quoting a photo without explicit command prefix
-            prompt = cleanGroupPrompt(rawText, botPhone);
-            mode = 'sticker';
-          } else {
-            // Tagged text without command or image
-            return;
-          }
+          mode = parsed.mode;
+          prompt = parsed.prompt;
+          isBareCommand = parsed.isBareCommand;
         } else {
           // Private DM requirements:
-          if (/^(!help|\/help)/i.test(rawText)) {
-            const status = limiter.getStatus();
-            const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
-              `*¿Cómo usarlo en chat privado?*\n\n` +
-              `✨ *Creación con IA:*\n` +
-              `• *Escribe cualquier texto* — Genera sticker automáticamente (ej: \`un gato astronauta\`)\n` +
-              `• */meme <desc>* — Forzar foto meme realista / cursed\n` +
-              `• *!sticker <desc>* — Forzar modo ilustración sticker\n\n` +
-              `📸 *Edición de fotos con IA:*\n` +
-              `• *Foto + texto* (o respondiendo a una foto) — Edita la foto con IA (ej: \`hazlo llorando\`, \`ponelo enojado\`, \`hacelo caricatura\`)\n` +
-              `• *Foto + /sticker* o */meme* — Transforma la foto al estilo seleccionado\n\n` +
-              `⚡ *Conversión directa (Sin IA / Ilimitado):*\n` +
-              `• *Envía cualquier foto sin texto* — Se convierte a sticker al instante sin consumir cuota diaria\n\n` +
-              `📊 *Estado:* ${status.used}/${status.limit} generaciones IA hoy (Reinicia 00:00 UTC)`;
-            await sock.sendMessage(remoteJid, { text: helpMessage }, { quoted: msg });
-            return;
+          const parsed = parseMessageIntent(rawText, {
+            isGroup: false,
+            botPhone: '',
+            hasImage: Boolean(targetImage)
+          });
+
+          if (parsed.isUtility) {
+            if (parsed.utilityType === 'help') {
+              const status = limiter.getStatus();
+              const helpMessage = `👋 *Rolex AI StickerBot*\n\n` +
+                `*¿Cómo usarlo en chat privado?*\n\n` +
+                `✨ *Creación con IA:*\n` +
+                `• *Escribe cualquier texto* — Genera sticker automáticamente (ej: \`un gato astronauta\`)\n` +
+                `• */meme <desc>* o *meme: <desc>* — Forzar foto meme realista / cursed\n` +
+                `• *!sticker <desc>* o *sticker: <desc>* — Forzar modo ilustración sticker\n\n` +
+                `📸 *Edición de fotos con IA:*\n` +
+                `• *Foto + texto* (o respondiendo a una foto) — Edita la foto con IA (ej: \`hazlo llorando\`, \`ponelo enojado\`)\n` +
+                `• *Foto + /meme* o *meme:* o *modo meme* — Transforma a foto meme cursed\n` +
+                `• *Foto + /sticker* o *sticker:* o *modo sticker* — Transforma a sticker ilustrado\n\n` +
+                `⚡ *Conversión directa (Sin IA / Ilimitado):*\n` +
+                `• *Envía cualquier foto sin texto* — Se convierte a sticker al instante sin consumir cuota diaria\n\n` +
+                `📊 *Estado:* ${status.used}/${status.limit} generaciones IA hoy (Reinicia 00:00 UTC)`;
+              await sock.sendMessage(remoteJid, { text: helpMessage }, { quoted: msg });
+              return;
+            }
+
+            if (parsed.utilityType === 'status') {
+              const status = limiter.getStatus();
+              const statusMessage = `📊 *Rolex AI Status*\n\n` +
+                `• *Fecha (UTC):* ${status.date}\n` +
+                `• *Usados:* ${status.used} / ${status.limit}\n` +
+                `• *Disponibles:* ${status.remaining}\n` +
+                `• *Reinicia:* 00:00 UTC`;
+              await sock.sendMessage(remoteJid, { text: statusMessage }, { quoted: msg });
+              return;
+            }
           }
 
-          if (/^(!status|\/status)/i.test(rawText)) {
-            const status = limiter.getStatus();
-            const statusMessage = `📊 *Rolex AI Status*\n\n` +
-              `• *Fecha (UTC):* ${status.date}\n` +
-              `• *Usados:* ${status.used} / ${status.limit}\n` +
-              `• *Disponibles:* ${status.remaining}\n` +
-              `• *Reinicia:* 00:00 UTC`;
-            await sock.sendMessage(remoteJid, { text: statusMessage }, { quoted: msg });
-            return;
-          }
-
-          const memeMatch = rawText.match(/^(!meme|\/meme)\s*(.*)/i);
-          const stickerMatch = rawText.match(/^(!sticker|\/sticker)\s*(.*)/i);
-
-          if (memeMatch) {
-            mode = 'meme';
-            prompt = memeMatch[2].trim();
-            if (!prompt) isBareCommand = true;
-          } else if (stickerMatch) {
-            mode = 'sticker';
-            prompt = stickerMatch[2].trim();
-            if (!prompt) isBareCommand = true;
-          } else {
-            // Natural DM: plain text defaults to sticker mode
-            mode = 'sticker';
-            prompt = rawText.trim();
-          }
+          mode = parsed.mode;
+          prompt = parsed.prompt;
+          isBareCommand = parsed.isBareCommand;
         }
 
         // Check for Direct Photo -> Sticker (NO AI flow)
@@ -369,16 +451,10 @@ async function handleIncomingMessages({ messages, type }) {
         }
 
         // Send initial acknowledgment to user
-        const ackEmoji = mode === 'meme' ? '🎭' : '🎨';
-        let ackTitle = mode === 'meme' ? 'Generando tu meme...' : 'Generando tu sticker...';
-        if (hasReferenceImage) {
-          ackTitle = mode === 'meme' ? 'Transformando tu foto a meme...' : 'Transformando tu foto a sticker...';
-        }
-
-        const promptDisplay = prompt ? `"${prompt}"\n` : '';
+        const ackText = getAcknowledgmentMessage(mode, { hasReferenceImage, prompt });
         await sock.sendMessage(
           remoteJid,
-          { text: `${ackEmoji} *${ackTitle}*\n${promptDisplay}_Por favor espera unos segundos..._` },
+          { text: ackText },
           { quoted: msg }
         );
 
@@ -499,5 +575,7 @@ export {
   downloadBaileysMedia,
   handleIncomingMessages,
   preprocessReferenceImage,
-  cleanGroupPrompt
+  cleanGroupPrompt,
+  parseMessageIntent,
+  getAcknowledgmentMessage
 };
