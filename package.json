@@ -4,8 +4,10 @@
   "description": "WhatsApp AI Sticker Bot using Baileys, Gemini via Cloudflare AI Gateway, and FLUX via Cloudflare Workers AI",
   "main": "src/index.js",
   "type": "module",
+  "engines": {"node": ">=24"},
   "scripts": {
     "start": "node src/index.js",
+    "test:pairing": "node --test test-pairing.mjs",
     "test:ai": "node src/test-ai.js"
   },
   "keywords": [
@@ -20,7 +22,7 @@
   "license": "ISC",
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.7.12",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "dotenv": "^16.4.7",
     "node-webpmux": "^3.2.1",
     "pino": "^9.6.0",

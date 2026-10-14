@@ -2,7 +2,9 @@ module.exports = {
   apps: [
     {
       name: 'stickerbot',
+      cwd: __dirname,
       script: 'src/index.js',
+      interpreter: process.env.STICKERBOT_NODE || 'node',
       // CRITICAL: Baileys only allows 1 instance. Do NOT use cluster mode.
       instances: 1,
       exec_mode: 'fork',
