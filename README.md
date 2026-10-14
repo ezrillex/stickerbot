@@ -23,7 +23,7 @@ WhatsApp AI Sticker Bot built with [Baileys](https://baileys.wiki/), **Google Ge
 
 ### 1. Requirements
 
-- Node.js 20.0.0 or higher
+- Node.js 24 or higher (Baileys pinned to 7.0.0-rc14)
 - A phone with WhatsApp installed (recommended: dedicated/prepaid number)
 
 ### 2. Configuration
@@ -75,9 +75,13 @@ You have two ways to authenticate:
 
 #### Option A: Phone Number Pairing Code (No Camera Needed)
 1. Either put your phone number in `.env`: `BOT_PHONE_NUMBER=15551234567` (with country code, no `+` or spaces), or enter it when prompted in terminal.
-2. The bot will print an 8-character pairing code (e.g. `ABCD-1234`).
+2. Wait for the pairing-ready notice, then read the private `pairing.txt` file for the 8-character code (e.g. `ABCD-1234`). The code is not printed in PM2 logs.
 3. On your phone, open WhatsApp > **Linked Devices** > **Link a Device** > tap **"Link with phone number instead"** at the bottom.
 4. Enter the pairing code.
+
+The code is requested only after the socket QR readiness event. A connection restart during pairing preserves credentials. An explicit 401 logout archives the rejected session as `auth-retired-*` and stops the retry loop; restart only this bot to generate another code. These directories and `pairing.txt` are private and must never be committed. Baileys is unofficial; using it can result in WhatsApp account suspension or blocking.
+
+Under PM2, set `BOT_PHONE_NUMBER` in the private `.env`; interactive prompts are unavailable. To use a private Node installation without changing the global runtime, set `STICKERBOT_NODE` to its absolute executable path when loading `ecosystem.config.cjs`. Run only `pm2 startOrRestart ecosystem.config.cjs --only stickerbot --update-env`. Never restart all VPS applications. Run `npm run test:pairing` and `node test-verification.mjs` for offline verification (the latter requires configuration variables, and can use test placeholders).
 
 #### Option B: QR Code
 1. Leave `BOT_PHONE_NUMBER` blank in `.env` and press `ENTER` when prompted.
