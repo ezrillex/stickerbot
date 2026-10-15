@@ -1,13 +1,26 @@
 import dotenv from 'dotenv';
-dotenv.config();
+import { fileURLToPath } from 'node:url';
+
+dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 
 function getEnv(key, defaultValue = undefined) {
   const value = process.env[key] || defaultValue;
   if (value === undefined) {
-    throw new Error(`Missing required environment variable: ${key}`);
+    throw new Error(`Missing required environment variable: ${key}. Copy .env.example to .env and configure your AI credentials.`);
   }
   return value;
 }
+
+function positiveInteger(key, fallback) {
+  const value = Number(process.env[key] || fallback);
+  if (!Number.isSafeInteger(value) || value < 1 || value > 2147483647) {
+    throw new Error(`${key} must be a positive integer (at most 2147483647).`);
+  }
+  return value;
+}
+
+const prefix = process.env.BOT_PREFIX || '!sticker';
+if (/\s/.test(prefix)) throw new Error('BOT_PREFIX must be a single command without spaces.');
 
 export const config = Object.freeze({
   cloudflare: {
@@ -27,10 +40,11 @@ export const config = Object.freeze({
     apiKey: getEnv('GEMINI_API_KEY')
   },
   bot: {
-    dailyLimit: parseInt(process.env.DAILY_LIMIT || '50', 10),
+    dailyLimit: positiveInteger('DAILY_LIMIT', 50),
+    aiTimeoutMs: positiveInteger('AI_TIMEOUT_MS', 60000),
     stickerPack: process.env.STICKER_PACK || 'Rolex AI',
     stickerAuthor: process.env.STICKER_AUTHOR || 'StickerBot',
-    prefix: process.env.BOT_PREFIX || '!sticker',
+    prefix,
     phoneNumber: process.env.BOT_PHONE_NUMBER || ''
   }
 });

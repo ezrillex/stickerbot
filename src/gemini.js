@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { request } from './request.js';
 
 const STICKER_SYSTEM_INSTRUCTION = `You are an expert sticker art prompt engineer for AI image generators.
 Your job is to convert the user's sticker idea into a detailed, high-quality image generation prompt.
@@ -61,7 +62,6 @@ Follow these strict rules:
 9. OUTPUT: Output ONLY the enhanced prompt in plain text. Keep it concise (under 80 words).`;
 
 export async function enhancePrompt(userPrompt, mode = 'sticker', options = {}) {
-  const url = config.cloudflare.geminiGatewayUrl;
   const isMeme = mode === 'meme';
   const { hasReferenceImage = false, isBareCommand = false } = options;
 
@@ -110,38 +110,10 @@ export async function enhancePrompt(userPrompt, mode = 'sticker', options = {}) 
     }
   };
 
-  const headers = {
-    'Content-Type': 'application/json',
-    'x-goog-api-key': config.gemini.apiKey
-  };
-
-  if (config.cloudflare.gatewayToken) {
-    headers['cf-aig-authorization'] = `Bearer ${config.cloudflare.gatewayToken}`;
-  }
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini Gateway API error (${response.status}): ${errorText}`);
-  }
-
-  const data = await response.json();
-  const enhanced = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-
-  if (!enhanced) {
-    throw new Error('Gemini returned an empty response or unexpected format.');
-  }
-
-  return enhanced;
+  return requestPrompt(payload);
 }
 
 export async function sanitizePrompt(blockedPrompt, mode = 'sticker', options = {}) {
-  const url = config.cloudflare.geminiGatewayUrl;
   const isMeme = mode === 'meme';
   const { hasReferenceImage = false } = options;
 
@@ -175,34 +147,7 @@ ${hasReferenceImage ? '6. Explicitly preserve the reference to "the subject of i
     }
   };
 
-  const headers = {
-    'Content-Type': 'application/json',
-    'x-goog-api-key': config.gemini.apiKey
-  };
-
-  if (config.cloudflare.gatewayToken) {
-    headers['cf-aig-authorization'] = `Bearer ${config.cloudflare.gatewayToken}`;
-  }
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini Sanitize API error (${response.status}): ${errorText}`);
-  }
-
-  const data = await response.json();
-  const sanitized = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-
-  if (!sanitized) {
-    throw new Error('Gemini returned an empty sanitized prompt.');
-  }
-
-  return sanitized;
+  return requestPrompt(payload);
 }
 
 export function enhanceStickerPrompt(userPrompt) {
@@ -211,4 +156,24 @@ export function enhanceStickerPrompt(userPrompt) {
 
 export function enhanceMemePrompt(userPrompt) {
   return enhancePrompt(userPrompt, 'meme');
+}
+
+async function requestPrompt(payload) {
+  return request(config.cloudflare.geminiGatewayUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': config.gemini.apiKey,
+      'cf-aig-authorization': `Bearer ${config.cloudflare.gatewayToken}`
+    },
+    body: JSON.stringify(payload)
+  }, async response => {
+    if (!response.ok) {
+      throw new Error(`Gemini Gateway API error (${response.status}): ${await response.text()}`);
+    }
+    const data = await response.json();
+    const prompt = data?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim();
+    if (!prompt) throw new Error('Gemini returned an empty response or unexpected format.');
+    return prompt;
+  });
 }

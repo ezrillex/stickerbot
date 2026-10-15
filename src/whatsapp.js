@@ -4,7 +4,6 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   Browsers
 } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import readline from 'readline';
@@ -61,7 +60,7 @@ export async function connectToWhatsApp(onMessageCallback) {
   let pairingPhoneNumber = config.bot.phoneNumber ? config.bot.phoneNumber.replace(/[^0-9]/g, '') : '';
 
   // If not registered and no phone number in .env, prompt in terminal
-  if (!state.creds.registered && !pairingPhoneNumber) {
+  if (!state.creds.registered && !pairingPhoneNumber && process.stdin.isTTY) {
     console.log('\n[WhatsApp] No active session found.');
     console.log('You can pair using a Phone Number Pairing Code (no camera needed) or QR code.');
     const input = await promptQuestion(
@@ -86,12 +85,11 @@ export async function connectToWhatsApp(onMessageCallback) {
 
   sockInstance = sock;
 
-  let pairingRequested = false;
-
   // Request Pairing Code if phone number provided and not registered
-  if (usePairingCode && !pairingRequested) {
-    pairingRequested = true;
-    setTimeout(async () => {
+  let pairingTimer;
+  let closed = false;
+  if (usePairingCode) {
+    pairingTimer = setTimeout(async () => {
       try {
         console.log(`\n[WhatsApp] Requesting 8-digit pairing code for: +${pairingPhoneNumber}...`);
         const code = await sock.requestPairingCode(pairingPhoneNumber);
@@ -111,7 +109,7 @@ export async function connectToWhatsApp(onMessageCallback) {
     }, 3000);
   }
 
-  sock.ev.on('connection.update', async (update) => {
+  sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr && !usePairingCode) {
@@ -123,28 +121,24 @@ export async function connectToWhatsApp(onMessageCallback) {
     }
 
     if (connection === 'close') {
-      const statusCode = (lastDisconnect?.error instanceof Boom)
-        ? lastDisconnect.error.output?.statusCode
-        : (lastDisconnect?.error?.output?.statusCode);
-
-      const isRegistered = Boolean(state.creds.registered);
-
-      if (isRegistered) {
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-        console.log(`[WhatsApp] Connection closed (status: ${statusCode}). Reconnecting: ${shouldReconnect}`);
-
-        if (shouldReconnect) {
-          setTimeout(() => connectToWhatsApp(onMessageCallback), 3000);
-        } else {
-          console.log('[WhatsApp] Session logged out from phone. Cleaning auth session...');
-          clearAuthSession();
-          console.log('[WhatsApp] Restart the bot to link again.');
-        }
-      } else {
-        // Pairing phase: If 401 happened before registration completed, clean and retry
-        console.log(`[WhatsApp] Connection closed during pairing (status: ${statusCode}). Resetting session for a fresh code...`);
+      if (closed) return;
+      closed = true;
+      clearTimeout(pairingTimer);
+      sockInstance = null;
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      if (statusCode === DisconnectReason.loggedOut) {
+        console.log('[WhatsApp] Session logged out. Cleaning auth session...');
         clearAuthSession();
-        setTimeout(() => connectToWhatsApp(onMessageCallback), 3000);
+        console.log('[WhatsApp] Restart the bot to link again.');
+      } else {
+        // Preserve partially linked credentials during transient failures and pairing restarts.
+        console.log(`[WhatsApp] Connection closed (status: ${statusCode}). Reconnecting...`);
+        setTimeout(() => {
+          connectToWhatsApp(onMessageCallback).catch(error => {
+            console.error('[WhatsApp] Reconnection failed:', error.message);
+            process.exitCode = 1;
+          });
+        }, 3000);
       }
     } else if (connection === 'open') {
       console.log('\n=========================================');
@@ -154,10 +148,16 @@ export async function connectToWhatsApp(onMessageCallback) {
     }
   });
 
-  sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', () => {
+    saveCreds().catch(error => console.error('[WhatsApp] Could not save session:', error.message));
+  });
 
   if (onMessageCallback) {
-    sock.ev.on('messages.upsert', onMessageCallback);
+    sock.ev.on('messages.upsert', update => {
+      Promise.resolve().then(() => onMessageCallback(update)).catch(error => {
+        console.error('[WhatsApp] Message handler failed:', error.message);
+      });
+    });
   }
 
   return sock;

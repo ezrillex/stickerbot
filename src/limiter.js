@@ -5,35 +5,38 @@ import { config } from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.BOT_DATA_DIR || path.join(__dirname, '..', 'data');
 const USAGE_FILE = path.join(DATA_DIR, 'usage.json');
 
 function getTodayUtcString() {
   return new Date().toISOString().split('T')[0];
 }
 
-class DailyLimiter {
-  constructor() {
-    this.limit = config.bot.dailyLimit;
-    this.currentDate = getTodayUtcString();
+export class DailyLimiter {
+  constructor({ limit = config.bot.dailyLimit, usageFile = USAGE_FILE, today = getTodayUtcString } = {}) {
+    this.limit = limit;
+    this.usageFile = usageFile;
+    this.today = today;
+    this.currentDate = this.today();
     this.count = 0;
     this.init();
   }
 
   init() {
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
+      fs.mkdirSync(path.dirname(this.usageFile), { recursive: true });
 
-      if (fs.existsSync(USAGE_FILE)) {
-        const raw = fs.readFileSync(USAGE_FILE, 'utf-8');
+      if (fs.existsSync(this.usageFile)) {
+        const raw = fs.readFileSync(this.usageFile, 'utf-8');
         const data = JSON.parse(raw);
-        const today = getTodayUtcString();
+        const today = this.today();
 
         if (data.date === today) {
           this.currentDate = data.date;
-          this.count = data.count || 0;
+          if (!Number.isSafeInteger(data.count) || data.count < 0) {
+            throw new Error('Invalid usage count');
+          }
+          this.count = data.count;
         } else {
           // New UTC day: reset
           this.currentDate = today;
@@ -56,14 +59,16 @@ class DailyLimiter {
         limit: this.limit,
         lastUpdated: new Date().toISOString()
       };
-      fs.writeFileSync(USAGE_FILE, JSON.stringify(data, null, 2), 'utf-8');
+      const tempFile = `${this.usageFile}.tmp`;
+      fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf-8');
+      fs.renameSync(tempFile, this.usageFile);
     } catch (err) {
       console.error('[Limiter] Error saving usage data:', err.message);
     }
   }
 
   checkReset() {
-    const today = getTodayUtcString();
+    const today = this.today();
     if (this.currentDate !== today) {
       console.log(`[Limiter] New UTC day detected (${today}). Resetting daily limit counter.`);
       this.currentDate = today;
@@ -82,8 +87,9 @@ class DailyLimiter {
     return false;
   }
 
-  refund() {
+  refund(acquiredDate = this.currentDate) {
     this.checkReset();
+    if (acquiredDate !== this.currentDate) return;
     if (this.count > 0) {
       this.count--;
       this.save();

@@ -1,158 +1,140 @@
-# Rolex AI StickerBot 🤖🎨
+# Rolex AI StickerBot
 
-WhatsApp AI Sticker Bot built with [Baileys](https://baileys.wiki/), **Google Gemini Flash Lite** via **Cloudflare AI Gateway**, and **FLUX 2 Klein 4B** via **Cloudflare Workers AI**.
+A WhatsApp bot that turns text ideas and photos into stickers. It uses [Baileys](https://baileys.wiki/) for WhatsApp, Gemini through Cloudflare AI Gateway for prompts, and FLUX 2 Klein through Cloudflare Workers AI for image generation.
 
-## Features
+- Write an idea in a private chat to generate an illustrated sticker.
+- Send a photo without text to convert it directly, without an AI request.
+- Send or quote a photo with instructions to edit it with AI.
+- Choose illustrated sticker or photographic meme style.
+- In groups, the bot responds only when mentioned or when you reply to its messages.
 
-- 💬 **WhatsApp Multi-Device Integration**: Fast and reliable connection via `@whiskeysockets/baileys`.
-- ✍️ **Natural DM Conversations**: Type any idea directly in private chat to generate a sticker—no commands required.
-- ⚡ **Direct Photo → Sticker (Zero Quota)**: Send any photo without text (or say *"hazlo sticker"*) to instantly convert it into a WhatsApp sticker without consuming AI daily quota.
-- 🎨 **Photo + Instruction AI Editing**: Send a photo with an instruction or reply to any photo (*"hazlo llorando"*, *"ponelo enojado"*) to edit and transform it with AI (`input_image_0`).
-- 🎭 **Flexible Style Selection & Aliases**: Choose between die-cut sticker illustration and realistic cursed meme mode using slash commands (`/sticker`, `/meme`, `!sticker`, `!meme`) or natural prefixes (`sticker:`, `meme:`, `modo sticker`, `modo meme`).
-- ⚡ **Bare Mode Transforms**: Send or reply to a photo with just `/sticker`, `/meme`, `sticker:`, `meme:`, `modo sticker`, or `modo meme` to transform the image directly without additional prompts.
-- 🧠 **AI Prompt Enhancement**: Translates user requests into optimized prompts using `google/gemini-flash-lite-latest` proxied through Cloudflare AI Gateway.
-- 🚀 **Sub-Second Image Generation**: Generates 512×512 images using `@cf/black-forest-labs/flux-2-klein-4b` via Cloudflare Workers AI.
-- ✂️ **Automatic Background Cutout**: Smooth anti-aliased background removal with `sharp` to produce authentic die-cut stickers.
-- 📦 **Native WhatsApp Stickers**: Encodes transparent WebP with custom EXIF metadata (`Rolex AI` / `StickerBot`).
-- ⏱️ **Safe Daily Quota Limiter**: Enforces a global 50-sticker daily limit with atomic acquisition and automatic refund on any failure.
-- 👥 **Group Safeguards**: Stays completely silent in groups unless tagged or replied to.
+## Quick start
 
----
+You need **Node.js 20 or newer**, **Git** (also used by a dependency during installation), a WhatsApp account, and Cloudflare and Gemini credentials. AI credentials are required to start the bot, including when using direct photo conversion.
 
-## Getting Started
-
-### 1. Requirements
-
-- Node.js 20.0.0 or higher
-- A phone with WhatsApp installed (recommended: dedicated/prepaid number)
-
-### 2. Configuration
-
-Ensure `.env` contains your credentials:
-
-```ini
-# Cloudflare Account & AI Gateway
-CLOUDFLARE_ACCOUNT_ID=your_cloudflare_account_id
-CLOUDFLARE_GATEWAY_ID=default
-CLOUDFLARE_GATEWAY_TOKEN=your_token
-CLOUDFLARE_API_TOKEN=your_token
-
-# Google AI Studio (Gemini)
-GEMINI_API_KEY=your_gemini_api_key
-
-# Bot Configuration
-DAILY_LIMIT=50
-STICKER_PACK=Rolex AI
-STICKER_AUTHOR=StickerBot
-BOT_PREFIX=!sticker
+```sh
+git clone https://github.com/ezrillex/stickerbot.git
+cd stickerbot
+npm ci
 ```
 
-### 3. Verification & Testing
+Copy the example configuration:
 
-#### Option A: Offline Test Suite (Zero API Quota Used)
-Run the offline verification suite to test message intent parsing, natural style aliases, bare command routing, rate limiting, and Baileys safeguards without consuming any API quota:
-
-```bash
-node test-verification.mjs
+```sh
+# macOS / Linux
+cp .env.example .env
 ```
 
-#### Option B: Live AI Pipeline Test (Consumes 1 Quota)
-Run the live integration test to verify real Cloudflare and Gemini API connectivity:
-
-```bash
-npm run test:ai
+```powershell
+# Windows PowerShell
+Copy-Item .env.example .env
 ```
 
-### 4. Run the Bot
+Edit `.env` with your credentials, then start:
 
-Start the WhatsApp bot:
-
-```bash
+```sh
 npm start
 ```
 
-You have two ways to authenticate:
+Keep the terminal running while using the bot. Stop it with **Ctrl+C**. Run one bot process per WhatsApp account.
 
-#### Option A: Phone Number Pairing Code (No Camera Needed)
-1. Either put your phone number in `.env`: `BOT_PHONE_NUMBER=15551234567` (with country code, no `+` or spaces), or enter it when prompted in terminal.
-2. The bot will print an 8-character pairing code (e.g. `ABCD-1234`).
-3. On your phone, open WhatsApp > **Linked Devices** > **Link a Device** > tap **"Link with phone number instead"** at the bottom.
-4. Enter the pairing code.
+## AI credentials
 
-#### Option B: QR Code
-1. Leave `BOT_PHONE_NUMBER` blank in `.env` and press `ENTER` when prompted.
-2. Scan the terminal QR code using WhatsApp camera.
+| Variable | Where to get it |
+| --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID; see the [Workers AI REST setup](https://developers.cloudflare.com/workers-ai/get-started/rest-api/). |
+| `CLOUDFLARE_API_TOKEN` | Create a Workers AI token using the [Workers AI token template](https://developers.cloudflare.com/workers-ai/get-started/rest-api/). A custom token needs Workers AI Read and Edit permissions for your account. |
+| `CLOUDFLARE_GATEWAY_ID` | Create an [AI Gateway](https://developers.cloudflare.com/ai-gateway/get-started/) in the same account and use its ID. The default is `default`; your gateway must match it. |
+| `CLOUDFLARE_GATEWAY_TOKEN` | Create an [authentication token](https://developers.cloudflare.com/ai-gateway/configuration/authentication/) with AI Gateway Run permission. |
+| `GEMINI_API_KEY` | Create a Gemini API key in [Google AI Studio](https://ai.google.dev/gemini-api/docs/api-key). |
 
----
+The Gemini request goes through AI Gateway; image generation goes directly to Workers AI. Provider quotas and billing apply independently of the bot's daily limit.
 
-## How to Use & Commands
+### Optional settings
 
-### 📱 In Private Chat (DMs)
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DAILY_LIMIT` | `50` | Global successful AI sticker requests per UTC day. Must be a positive integer. Failed requests refund their reservation. |
+| `AI_TIMEOUT_MS` | `60000` | Deadline for each AI request, including reading its response. Must be a positive integer. |
+| `STICKER_PACK` | `Rolex AI` | Sticker pack metadata. |
+| `STICKER_AUTHOR` | `StickerBot` | Sticker author metadata. |
+| `BOT_PREFIX` | `!sticker` | Additional sticker command, such as `!draw`. Built-in commands remain available. Use one command without spaces. |
+| `BOT_PHONE_NUMBER` | Empty | Phone number for pairing codes, including country code, without `+` or spaces. |
+| `BOT_DATA_DIR` | `data/` in the repository | Alternative directory for daily usage storage. Relative paths resolve from the working directory. |
 
-| Action / Message | What it does | AI Quota Used |
-| :--- | :--- | :---: |
-| **Send any text** (e.g. `un gato astronauta`) | Automatically creates an AI die-cut sticker (default mode) | 1 |
-| **Send a photo without text** | Directly converts your photo to a sticker | **0 (Free)** |
-| **Send a photo + "hazlo sticker"** | Directly converts your photo to a sticker | **0 (Free)** |
-| **Send photo + instruction** (e.g. `hazlo llorando`) | Edits your photo with AI into a sticker | 1 |
-| **Reply to any photo + instruction** | Edits that quoted photo with AI | 1 |
-| **Send/reply to photo + `/sticker`**, `sticker:`, or `modo sticker` | Transforms photo into an illustrated die-cut sticker | 1 |
-| **Send/reply to photo + `/meme`**, `meme:`, or `modo meme` | Transforms photo into a realistic cursed/candid meme | 1 |
-| `/sticker <desc>`, `!sticker <desc>`, `sticker: <desc>`, or `modo sticker <desc>` | Forces die-cut sticker illustration mode | 1 |
-| `/meme <desc>`, `!meme <desc>`, `meme: <desc>`, or `modo meme <desc>` | Forces realistic cursed/chaotic meme photo mode | 1 |
-| `!status` or `/status` | Shows daily generations used, remaining, and reset time | 0 |
-| `!help` or `/help` | Displays interactive in-chat help guide | 0 |
+The bot reads `.env` from the repository directory. Environment variables already set in your shell take precedence.
 
-### 👥 In Groups
+## Link WhatsApp
 
-> **Note:** The bot completely ignores regular group conversation to avoid spam. To create stickers from text in groups, you must use an explicit mode selector (`/sticker`, `sticker:`, `/meme`, `meme:`). It only responds when tagged or quoted.
+On first startup, choose one of these methods:
 
-| Action / Message | What it does | AI Quota Used |
-| :--- | :--- | :---: |
-| `@bot /sticker <desc>` or `@bot sticker: <desc>` | Generates a die-cut illustration sticker | 1 |
-| `@bot /meme <desc>` or `@bot meme: <desc>` | Generates a realistic cursed meme photo sticker | 1 |
-| **Tag `@bot` on a photo (no text)** | Converts photo directly to sticker | **0 (Free)** |
-| **Reply to a photo with `@bot` (no text)** | Converts quoted photo directly to sticker | **0 (Free)** |
-| **Reply to photo with `@bot <instrucción>`** | Edits quoted photo with AI in sticker mode (e.g. `@bot hazlo llorando`) | 1 |
-| **Reply to photo with `@bot /meme`** or `@bot meme:` | Transforms quoted photo into cursed meme photo style | 1 |
-| **Reply to photo with `@bot /sticker`** or `@bot sticker:` | Transforms quoted photo into illustrated sticker style | 1 |
-| `@bot !status` or `@bot /status` | Shows daily quota status | 0 |
-| `@bot !help` or `@bot /help` | Displays group instructions and commands | 0 |
-| *Unrelated or un-prefixed group text* | **Ignored completely** | 0 |
+**Pairing code:** Set `BOT_PHONE_NUMBER` in `.env`, or enter your number at the terminal prompt. On your phone, open WhatsApp → Linked devices → Link a device → Link with phone number instead. Enter the displayed code.
 
----
+**QR code:** Leave `BOT_PHONE_NUMBER` empty and press Enter at the prompt. Open WhatsApp → Linked devices → Link a device and scan the terminal QR code. If the terminal cannot accept interactive input, the bot uses QR pairing automatically.
 
-## Production Deployment with PM2
+The session is saved in `auth_session/`, so subsequent starts reuse it. If you log out through WhatsApp, restart the bot to link again.
 
-### 1. Install PM2 Globally
-```bash
-npm install -g pm2
+## Usage
+
+### Private chats
+
+Any ordinary text idea triggers AI generation. Messages and replies to photos use these rules:
+
+| Input | Result | Bot daily quota |
+| --- | --- | --- |
+| `un gato astronauta` | Illustrated sticker | 1 |
+| `/sticker <idea>` or `!sticker <idea>` | Illustrated sticker | 1 |
+| `/meme <idea>` or `!meme <idea>` | Photographic meme sticker | 1 |
+| `sticker: <idea>` / `modo sticker <idea>` | Illustrated sticker | 1 |
+| `meme: <idea>` / `modo meme <idea>` | Photographic meme sticker | 1 |
+| Photo without text, or with `hazlo sticker`, `hacelo sticker`, or `sticker` | Direct photo conversion | 0 |
+| Photo + instruction, or reply to a photo + instruction | AI photo edit | 1 |
+| Photo + bare `/sticker`, `sticker:`, or `modo sticker` | AI illustration transform | 1 |
+| Photo + bare `/meme`, `meme:`, or `modo meme` | AI photographic meme transform | 1 |
+| `/help` or `!help` | Usage instructions | 0 |
+| `/status` or `!status` | Daily usage and reset time | 0 |
+
+A bare mode command on a photo requests an **AI transform**. For direct conversion, send the photo without text instead. Bang commands (`!sticker`, `!meme`) also support bare transforms.
+
+### Groups
+
+Mention the bot or reply to one of its messages. For text-only requests, also include a mode selector, such as `@bot /sticker gato astronauta` or `@bot meme: gato sorprendido`. Your configured `BOT_PREFIX` works here too.
+
+For photos, mention the bot on the photo or in a reply to it. No instruction converts the photo directly; an instruction edits it with AI. `/help` and `/status` also require addressing the bot. Other group messages are ignored.
+
+## Tests and development
+
+```sh
+npm test
 ```
 
-### 2. Start the Bot
-```bash
-pm2 start ecosystem.config.cjs
+The offline suite uses dummy credentials, mocked API responses, and temporary usage storage. It needs no `.env`, does not connect to WhatsApp, and does not consume provider quota or modify your daily usage. It covers command routing, group safeguards, media downloads, AI timeouts and refunds, persistence, and real WebP conversion.
+
+To check real AI connectivity after configuring credentials:
+
+```sh
+npm run test:ai
 ```
 
-> **IMPORTANT:** Always run with `instances: 1` (`exec_mode: 'fork'`). Never run WhatsApp bots in cluster mode.
+This optional live test makes **two Gemini requests and two image generations**: one new image and one edit. It consumes provider quota/billing and bypasses the bot's daily usage counter. Results are written to `temp/`.
 
-### 3. Manage the Process
-```bash
-# View real-time logs
-pm2 logs stickerbot
+Source modules:
 
-# View bot status and resource usage
-pm2 status
+- `src/main.js`: startup.
+- `src/index.js`: message routing and the sticker pipeline.
+- `src/messages.js` / `src/replies.js`: commands and chat responses.
+- `src/whatsapp.js` / `src/media.js`: connection, authentication, and image downloads.
+- `src/gemini.js` / `src/imageGen.js` / `src/request.js`: AI clients and request deadlines.
+- `src/sticker.js`: background removal and WebP metadata.
+- `src/limiter.js`: daily usage persistence.
+- `src/imageLog.js`: generated image logging.
 
-# Restart the bot
-pm2 restart stickerbot
+## Troubleshooting and local files
 
-# Stop the bot
-pm2 stop stickerbot
-```
+- **Missing environment variable:** Copy `.env.example` to `.env` and fill in every required credential.
+- **AI authentication error:** Check that tokens belong to the configured account, the gateway ID exists, and the token permissions match the credential table.
+- **AI timeout:** Try again, or increase `AI_TIMEOUT_MS` if your connection consistently needs more time. Failed requests release their bot quota reservation.
+- **Old photo cannot download:** Resend the photo. Downloads have a 25-second deadline and a 20 MiB size limit.
+- **Daily limit reached:** AI generation resets at midnight UTC. Direct photo conversion still works.
 
-### 4. Enable Auto-Start on Server Reboot
-```bash
-pm2 startup
-pm2 save
-```
+`.env`, `auth_session/`, `data/`, `logs/`, and `temp/` are ignored by Git. Treat `.env` and the authentication session as secrets. Generated images are saved under `logs/images/`; remove old logs when you no longer need them. Keep `data/usage.json` across restarts to preserve the daily counter.

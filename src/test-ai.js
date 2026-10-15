@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { enhancePrompt } from './gemini.js';
 import { generateImage } from './imageGen.js';
 import { createSticker } from './sticker.js';
+import { preprocessReferenceImage } from './media.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,33 +14,31 @@ async function runTest() {
   console.log('==============================================');
   console.log('     Rolex AI StickerBot — Pipeline Test      ');
   console.log('==============================================\n');
+  console.log('Live test: makes two Gemini requests and two image generations.');
+  console.log('Uses provider quota/billing; does not modify the bot daily usage counter.\n');
 
   const testPrompt = 'a cute golden retriever wearing sunglasses and a hoodie';
   console.log(`[Test] Input prompt: "${testPrompt}"\n`);
 
   try {
     // 1. Gemini enhancement
-    console.log('[1/3] Testing Gemini Flash Lite via Cloudflare AI Gateway...');
+    console.log('[1/4] Testing Gemini Flash Lite via Cloudflare AI Gateway...');
     const enhancedPrompt = await enhancePrompt(testPrompt);
-    console.log(`[1/3] SUCCESS! Enhanced prompt:\n      "${enhancedPrompt}"\n`);
+    console.log(`[1/4] SUCCESS! Enhanced prompt:\n      "${enhancedPrompt}"\n`);
 
     // 2. FLUX image generation
-    console.log('[2/3] Testing FLUX 2 Klein 4B via Cloudflare Workers AI...');
+    console.log('[2/4] Testing FLUX 2 Klein 4B via Cloudflare Workers AI...');
     const imageBuffer = await generateImage(enhancedPrompt);
-    console.log(`[2/3] SUCCESS! Generated image size: ${imageBuffer.length} bytes\n`);
+    console.log(`[2/4] SUCCESS! Generated image size: ${imageBuffer.length} bytes\n`);
 
     // 3. Cutout & WebP sticker creation
-    console.log('[3/3] Testing background removal and WebP sticker formatting...');
+    console.log('[3/4] Testing background removal and WebP sticker formatting...');
     const stickerBuffer = await createSticker(imageBuffer);
-    console.log(`[3/3] SUCCESS! Sticker size: ${stickerBuffer.length} bytes\n`);
+    console.log(`[3/4] SUCCESS! Sticker size: ${stickerBuffer.length} bytes\n`);
 
     // 4. Reference image edit flow (Image + instruction -> AI sticker)
     console.log('[4/4] Testing reference image editing (FLUX 2 Klein + Gemini hasReferenceImage)...');
-    const sharp = (await import('sharp')).default;
-    const preprocessedInput = await sharp(imageBuffer)
-      .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 85 })
-      .toBuffer();
+    const preprocessedInput = await preprocessReferenceImage(imageBuffer);
 
     const editPrompt = 'add colorful festive birthday party hat and confetti';
     const editEnhanced = await enhancePrompt(editPrompt, 'sticker', { hasReferenceImage: true });

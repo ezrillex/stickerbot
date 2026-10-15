@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { request } from './request.js';
 
 export async function generateImage(prompt, inputImageBuffer = null) {
   const url = config.cloudflare.fluxUrl;
@@ -20,12 +21,10 @@ export async function generateImage(prompt, inputImageBuffer = null) {
     'Authorization': `Bearer ${config.cloudflare.apiToken}`
   };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: formData
-  });
+  return request(url, { method: 'POST', headers, body: formData }, readImageResponse);
+}
 
+async function readImageResponse(response) {
   const contentType = response.headers.get('content-type') || '';
 
   if (!response.ok) {
